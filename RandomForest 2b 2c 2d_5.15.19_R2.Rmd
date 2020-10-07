@@ -1,0 +1,720 @@
+---
+title: "2a"
+author: "Emily Bovee"
+date: "3/10/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Common Code Bank for All Multivariate Random Forest Models
+```{r}
+#----------------------Load relevant libraries
+library(MultivariateRandomForest)
+library(pROC)
+library(tidyverse)
+library(beepr)
+library(doParallel)
+library(foreach)
+setwd("/Volumes/Linnen Lab/MSU Engineering/PROJECTS/Emily Dissertation/*May 2019 Party*")
+getwd()
+#----------------------Load relevant data
+  # Use the output of the Merge!.R file: randomforestdata.csv
+
+#using imputation 2 because that was the dataset that I randomly selected to use for this analysis
+
+data <- read_csv("randomforestdata_3.18.19_withURM.csv")
+
+#-------Delete listwise
+#Remove nas from the dataset
+RFdata <- na.omit(data)  
+
+#----------------------Set seed
+set.seed(2020)
+#----------------------Set up relevant functions
+
+#------- cv function
+  #taken from the documentation for Amelia Package
+  #adding the set.seed argument
+cvData = function (X, Y, F, seed=2020) {
+  DrugNumber = nrow(Y)
+  Index = 1:DrugNumber
+  FoldedIndex = NULL
+  FF = F - 1
+  for (i in 1:FF) {
+    set.seed(seed)
+    FoldedIndex[[i]] = sample(Index, floor(DrugNumber/F))
+    Index = setdiff(Index, FoldedIndex[[i]])
+    if (i == FF) {
+      FoldedIndex[[i + 1]] = Index
+    }
+  }
+  TestingIndex = NULL
+  TrainingIndex = NULL
+  TrainingData = NULL
+  TestingData = NULL
+  OutputTrain = NULL
+  OutputTest = NULL
+  for (i in 1:F) {
+    TestingIndex[[i]] = FoldedIndex[[i]]
+    TrainingIndex[[i]] = setdiff(1:DrugNumber, TestingIndex[[i]])
+    TrainingData[[i]] = X[TrainingIndex[[i]], , drop = FALSE]
+    TestingData[[i]] = X[TestingIndex[[i]], , drop = FALSE]
+    OutputTrain[[i]] = Y[TrainingIndex[[i]], , drop = FALSE]
+    OutputTest[[i]] = Y[TestingIndex[[i]], , drop = FALSE]
+  }
+  result = list(TrainingData, TestingData, OutputTrain, OutputTest, 
+                FoldedIndex)
+  return(result)
+}
+
+#The GitHub Repository from which this is derived
+#https://github.com/cran/MultivariateRandomForest/blob/master/R/CrossValidation.R
+
+```
+#########################################################
+2b
+#########################################################
+
+```{r}
+#reload raw data
+data <- read_csv("randomforestdata_3.18.19_withURM.csv")
+
+#-------Delete listwise
+#Remove nas from the dataset
+RFdata <- na.omit(data) 
+
+#selecting only the variables that are needed for this specific analysis
+RFdata <- RFdata %>% 
+                select(c(
+#DEMOGRAPHIC PREDICTORS
+                  "FEMALE",
+                  "URM",
+                  "FIRSTGEN",
+                  "Max_ACT_Composite",   
+#CO-CURRICULAR PREDICTORS
+"mlc_yr1",
+#MOTIVATION PREDICTORS
+"V2_ESE",
+"V2_Val",
+#OUTCOMES
+   "adv_yr3",    
+     	   "center_event_yr3", 
+   "center_adv_yr3", 
+   "mock_yr3",
+	   "mlc_yr3")) 
+
+#put(outcome/s) at the front of the dataset
+RFdata <- RFdata %>% 
+  select(c("adv_yr3":"mlc_yr3"), everything())
+```
+
+# Random Forest
+
+```{r}
+#------------
+#Generate matrices from dataset in order to later do cross-validation
+#------------
+#The arguments I need for cross-validation
+        #X	      M x N Input matrix, M is the number of samples and N is the number of features
+        #Y	      output responses as column vector
+        #F	      Number of Folds
+
+
+#---------- Create X and Y
+              # X is my data frame in a matrix format with just the features / covariates for the 
+                  #model
+              # Y is my data frame again in a matrix format with just the dependent variables
+
+
+#Creating the x input matrix (predictors)
+  #Make a matrix of predictor variables, for training X, exclude outcome
+ X = data.matrix (RFdata [, -(1:5)])
+ 
+#Creating the Y input matrix (outcome)
+  #Make a matrix for training Y - outcome variables only
+  Y = data.matrix (RFdata [, (1:5)])
+
+###--------------------------------- 
+#Further Reading
+###---------------------------------  
+#More about creating a matrix from a dataframe
+      #https://stat.ethz.ch/R-manual/R-devel/library/base/html/data.matrix.html
+
+# More about subsetting matrices
+# http://astrostatistics.psu.edu/su07/R/html/base/html/subset.html
+
+###---------------------------------  
+#Notes
+###---------------------------------  
+  ###NOTE TO SELF: Make sure data is in the correct order because this calls on you to ignore certain variables and it's important to know the order of the variables in order for this to make sense
+                #for example: the X matrix has -(1:2), meaning we want to exclude the first two rows
+                #the second matrix has 1, 
+```
+
+
+```{r}
+
+# generate dataset for cross-validation
+
+crossData <- cvData(X, Y, F=5, seed=3)
+xTrainList = crossData[[1]]
+xTestList = crossData[[2]]
+yTrainList = crossData[[3]]
+yTestList = crossData[[4]]
+
+```
+
+```{r}
+#-------parameters for the random forest
+n_tree=5
+m_feature=5
+min_leaf=5
+
+#-------For Loop to run the random forest itself
+preds = NULL
+
+cl=makeCluster(6) # set number of cores to use
+registerDoParallel(cl) # pass them off to r session
+preds = foreach(
+  ii = 1:length(xTrainList), # loop through # of folds indexing by i
+  .packages=c('MultivariateRandomForest') # load necessary packages
+  ) %dopar% { # start of parallelization loop
+
+  # organize data to run on one fold of cross-validated data
+  trainX = xTrainList[[ ii ]]
+  trainY = yTrainList[[ ii ]]
+  testX = xTestList[[ ii ]]
+  testY = yTestList[[ii]]
+
+  # generate predictions for that fold
+  foldPreds = build_forest_predict(
+    trainX, trainY, n_tree, m_feature, min_leaf, testX
+    )  
+  
+  # organize into big preds df
+  colnames(foldPreds) = paste0('yhat_',1:ncol(foldPreds))
+  colnames(testY) = paste0('y_',1:ncol(testY))
+  foldPreds = cbind(foldPreds, testY)
+  return(foldPreds)
+} # end of parallelization loop
+
+stopCluster(cl) # close extra cores
+
+# organize results into dataframe
+preds = do.call('rbind', preds)
+
+dim(preds)
+head(preds)
+
+## Rename the preds df to correspond to this specific one that I'm on
+
+model_2b <- preds
+
+##Performance: caclulate RMSE with a function
+
+RMSE<- function(pred, obs){
+  diff <- pred-obs
+  diffsq <- diff^2
+  numerator<- sum(diffsq)
+  N = length(diff)
+  return(sqrt(numerator /N))
+}
+    #notes to self on my function:
+    #pred = vector of predicted values
+    #obs <- df.fold$absidealdiff
+    #PREDICTED AND OBSERVED MUST BOTH BE VECTORS
+    #Get observed out of the dataframe
+
+#########################################################
+###RANDOM FOREST EVALUATION
+#########################################################
+#Give it the predicted and observed values
+# RMSE_ESE_2b <- RMSE(model_2b[1], model_2b[3])
+# RMSE_Val_2b <- RMSE(model_2b[2], model_2b[4])
+```
+#########################################################
+2c
+#########################################################
+
+```{r}
+#reload raw data
+data <- read_csv("randomforestdata_3.18.19_withURM.csv")
+
+#-------Delete listwise
+#Remove nas from the dataset
+RFdata <- na.omit(data) 
+
+#selecting only the variables that are needed for this specific analysis
+RFdata <- RFdata %>% 
+select(c(
+#DEMOGRAPHIC PREDICTORS
+    "FEMALE",
+    "URM",
+    "FIRSTGEN",
+    "Max_ACT_Composite",   
+#CO-CURRICULAR PREDICTORS
+     "center_event_yr2", 
+     "center_adv_yr2", 
+     "mock_yr2",
+     "mlc_yr2",
+     "adv_yr2",    
+#MOTIVATION PREDICTORS
+    "V3_ESE",
+    "V3_Val",
+#OUTCOMES
+   "adv_yr3",    
+   "center_event_yr3", 
+   "center_adv_yr3", 
+   "mock_yr3",
+	 "mlc_yr3")) 
+  
+#put(outcome/s) at the front of the dataset
+RFdata <- RFdata %>% 
+  select(c("adv_yr3":"mlc_yr3"), everything())
+
+```
+
+# Random Forest
+
+```{r}
+#------------
+#Generate matrices from dataset in order to later do cross-validation
+#------------
+#The arguments I need for cross-validation
+        #X	      M x N Input matrix, M is the number of samples and N is the number of features
+        #Y	      output responses as column vector
+        #F	      Number of Folds
+
+
+#---------- Create X and Y
+              # X is my data frame in a matrix format with just the features / covariates for the 
+                  #model
+              # Y is my data frame again in a matrix format with just the dependent variables
+
+
+#Creating the x input matrix (predictors)
+  #Make a matrix of predictor variables, for training X, exclude outcome
+ X = data.matrix (RFdata [, -(1:5)])
+ 
+#Creating the Y input matrix (outcome)
+  #Make a matrix for training Y - outcome variables only
+  Y = data.matrix (RFdata [, (1:5)])
+
+###--------------------------------- 
+#Further Reading
+###---------------------------------  
+#More about creating a matrix from a dataframe
+      #https://stat.ethz.ch/R-manual/R-devel/library/base/html/data.matrix.html
+
+# More about subsetting matrices
+# http://astrostatistics.psu.edu/su07/R/html/base/html/subset.html
+
+###---------------------------------  
+#Notes
+###---------------------------------  
+  ###NOTE TO SELF: Make sure data is in the correct order because this calls on you to ignore certain variables and it's important to know the order of the variables in order for this to make sense
+                #for example: the X matrix has -(1:2), meaning we want to exclude the first two rows
+                #the second matrix has 1, 
+```
+
+
+```{r}
+
+# generate dataset for cross-validation
+
+crossData <- cvData(X, Y, F=5, seed=3)
+xTrainList = crossData[[1]]
+xTestList = crossData[[2]]
+yTrainList = crossData[[3]]
+yTestList = crossData[[4]]
+
+```
+
+```{r}
+#-------parameters for the random forest
+n_tree=5
+m_feature=5
+min_leaf=5
+
+#-------For Loop to run the random forest itself
+preds = NULL
+cl=makeCluster(6) # set number of cores to use
+registerDoParallel(cl) # pass them off to r session
+
+preds = foreach(
+  ii = 1:length(xTrainList), # loop through # of folds indexing by i
+  .packages=c('MultivariateRandomForest') # load necessary packages
+  ) %dopar% { # start of parallelization loop
+
+  # organize data to run on one fold of cross-validated data
+  trainX = xTrainList[[ ii ]]
+  trainY = yTrainList[[ ii ]]
+  testX = xTestList[[ ii ]]
+  testY = yTestList[[ii]]
+
+  # generate predictions for that fold
+  foldPreds = build_forest_predict(
+    trainX, trainY, n_tree, m_feature, min_leaf, testX
+    )  
+  
+  # organize into big preds df
+  colnames(foldPreds) = paste0('yhat_',1:ncol(foldPreds))
+  colnames(testY) = paste0('y_',1:ncol(testY))
+  foldPreds = cbind(foldPreds, testY)
+  return(foldPreds)
+} # end of parallelization loop
+
+stopCluster(cl) # close extra cores
+
+# organize results into dataframe
+preds = do.call('rbind', preds)
+
+dim(preds)
+head(preds)
+
+## Rename the preds df to correspond to this specific one that I'm on
+
+model_2c <- preds
+
+##Performance: caclulate RMSE with a function
+
+RMSE<- function(pred, obs){
+  diff <- pred-obs
+  diffsq <- diff^2
+  numerator<- sum(diffsq)
+  N = length(diff)
+  return(sqrt(numerator /N))
+}
+    #notes to self on my function:
+    #pred = vector of predicted values
+    #obs <- df.fold$absidealdiff
+    #PREDICTED AND OBSERVED MUST BOTH BE VECTORS
+    #Get observed out of the dataframe
+
+#########################################################
+###RANDOM FOREST EVALUATION
+#########################################################
+#Give it the predicted and observed values
+# RMSE_ESE_2c <- RMSE(model_2c[1], model_2c[3])
+# RMSE_Val_2c <- RMSE(model_2c[2], model_2c[4])
+
+# RMSE_ESE_2c
+# RMSE_Val_2c
+```
+
+#########################################################
+2d
+#########################################################
+# Select the variables that are needed for this random forest
+
+```{r}
+#reload raw data
+data <- read_csv("randomforestdata_3.18.19_withURM.csv")
+
+#-------Delete listwise
+#Remove nas from the dataset
+RFdata <- na.omit(data) 
+
+#selecting only the variables that are needed for this specific analysis
+RFdata <- RFdata %>% 
+select(c(
+#DEMOGRAPHIC PREDICTORS
+                  "FEMALE",
+                  "URM",
+                  "FIRSTGEN",
+                  "Max_ACT_Composite",   
+#ON-CAMPUS LIVING
+                  "SouthcomplexBinary_2015",
+#CO-CURRICULAR PREDICTORS
+"mlc_yr1",
+"mlc_yr2",
+"adv_yr2",
+     "center_event_yr2", 
+     "center_adv_yr2", 
+    "mock_yr2",
+#MOTIVATION PREDICTORS
+"V1_ESE",
+"V1_Val",
+"V2_ESE",
+"V2_Val",
+"V3_ESE",
+"V3_Val",
+#OUTCOMES
+   "adv_yr3",    
+     	   "center_event_yr3", 
+   "center_adv_yr3", 
+   "mock_yr3",
+	   "mlc_yr3")) 
+
+
+#put(outcome/s) at the front of the dataset
+#put(outcome/s) at the front of the dataset
+RFdata <- RFdata %>% 
+  select(c("adv_yr3":"mlc_yr3"), everything())
+
+```
+
+# Random Forest
+
+```{r}
+#------------
+#Generate matrices from dataset in order to later do cross-validation
+#------------
+#The arguments I need for cross-validation
+        #X	      M x N Input matrix, M is the number of samples and N is the number of features
+        #Y	      output responses as column vector
+        #F	      Number of Folds
+
+
+#---------- Create X and Y
+              # X is my data frame in a matrix format with just the features / covariates for the 
+                  #model
+              # Y is my data frame again in a matrix format with just the dependent variables
+
+
+#Creating the x input matrix (predictors)
+  #Make a matrix of predictor variables, for training X, exclude outcome
+ X = data.matrix (RFdata [, -(1:5)])
+ 
+#Creating the Y input matrix (outcome)
+  #Make a matrix for training Y - outcome variables only
+  Y = data.matrix (RFdata [, (1:5)])
+
+###--------------------------------- 
+#Further Reading
+###---------------------------------  
+#More about creating a matrix from a dataframe
+      #https://stat.ethz.ch/R-manual/R-devel/library/base/html/data.matrix.html
+
+# More about subsetting matrices
+# http://astrostatistics.psu.edu/su07/R/html/base/html/subset.html
+
+###---------------------------------  
+#Notes
+###---------------------------------  
+  ###NOTE TO SELF: Make sure data is in the correct order because this calls on you to ignore certain variables and it's important to know the order of the variables in order for this to make sense
+                #for example: the X matrix has -(1:2), meaning we want to exclude the first two rows
+                #the second matrix has 1, 
+```
+
+
+```{r}
+
+# generate dataset for cross-validation
+
+crossData <- cvData(X, Y, F=5, seed=3)
+xTrainList = crossData[[1]]
+xTestList = crossData[[2]]
+yTrainList = crossData[[3]]
+yTestList = crossData[[4]]
+
+```
+
+```{r}
+#-------parameters for the random forest
+n_tree=5
+m_feature=5
+min_leaf=5
+
+#-------For Loop to run the random forest itself
+preds = NULL
+cl=makeCluster(6) # set number of cores to use
+registerDoParallel(cl) # pass them off to r session
+
+preds = foreach(
+  ii = 1:length(xTrainList), # loop through # of folds indexing by i
+  .packages=c('MultivariateRandomForest') # load necessary packages
+  ) %dopar% { # start of parallelization loop
+
+  # organize data to run on one fold of cross-validated data
+  trainX = xTrainList[[ ii ]]
+  trainY = yTrainList[[ ii ]]
+  testX = xTestList[[ ii ]]
+  testY = yTestList[[ii]]
+
+  # generate predictions for that fold
+  foldPreds = build_forest_predict(
+    trainX, trainY, n_tree, m_feature, min_leaf, testX
+    )  
+  
+  # organize into big preds df
+  colnames(foldPreds) = paste0('yhat_',1:ncol(foldPreds))
+  colnames(testY) = paste0('y_',1:ncol(testY))
+  foldPreds = cbind(foldPreds, testY)
+  return(foldPreds)
+} # end of parallelization loop
+
+stopCluster(cl) # close extra cores
+
+# organize results into dataframe
+preds = do.call('rbind', preds)
+
+dim(preds)
+head(preds)
+
+## Rename the preds df to correspond to this specific one that I'm on
+
+model_2d <- preds
+
+##Performance: caclulate RMSE with a function
+
+RMSE<- function(pred, obs){
+  diff <- pred-obs
+  diffsq <- diff^2
+  numerator<- sum(diffsq)
+  N = length(diff)
+  return(sqrt(numerator /N))
+}
+    #notes to self on my function:
+    #pred = vector of predicted values
+    #obs <- df.fold$absidealdiff
+    #PREDICTED AND OBSERVED MUST BOTH BE VECTORS
+    #Get observed out of the dataframe
+
+#########################################################
+###RANDOM FOREST EVALUATION
+#########################################################
+#Give it the predicted and observed values
+# RMSE_ESE_2d <- RMSE(model_2d[1], model_2d[3])
+# RMSE_Val_2d <- RMSE(model_2d[2], model_2d[4])
+# 
+# RMSE_ESE
+# RMSE_Val
+
+#Save predicted/actual datasets
+saveRDS(model_2b,file="model_2b.Rda")
+saveRDS(model_2c,file="model_2c.Rda")
+saveRDS(model_2d,file="model_2d.Rda")
+
+#not sure if that worked, so writing CSVs as well
+write_csv(as.data.frame(model_2b), "model_2b.csv")
+write_csv(as.data.frame(model_2c), "model_2c.csv")
+write_csv(as.data.frame(model_2d), "model_2d.csv")
+```
+
+## Checking all RMSEs 
+I had all the code above run at once, so now I will check the RMSEs for those models
+
+
+
+##START CHANGING FROM HERE TONIGHT - 4.2.2019
+
+
+#Introduce standardization function
+```{r}
+stdz = function(x){ (x - mean(x))/sd(x) } 
+```
+
+#Bind All observed and predicted into two vectors
+
+```{r}
+####################################
+#LOAD THE MODELS INTO THE WORKSPACE
+####################################
+
+###Make sure all the functions are there
+stdz = function(x){ (x - mean(x))/sd(x) } 
+
+
+RMSE<- function(pred, obs){
+  diff <- pred-obs
+  diffsq <- diff^2
+  numerator<- sum(diffsq)
+  N = length(diff)
+  return(sqrt(numerator /N))
+}
+
+
+##################
+#MODEL B
+##################
+
+#COMBINE ALL PREDICTED VAL into a VECTOR
+pred_2b = c(model_2b[1], model_2b[2], model_2b[3],
+model_2b[4],
+model_2b[5])
+
+#COMBINE OBSERVED
+obs_2b = c(model_2b[6], model_2b[7], model_2b[8],
+model_2b[9],
+model_2b[10])
+
+#get RMSE for model 2b
+
+rmse_2b <- RMSE(obs_2b,pred_2b)
+rmse_2b
+
+#Standardize the predicted and actual values
+  #for ALL 5 variables
+
+obs_2b <- stdz(obs_2b)
+pred_2b <- stdz(pred_2b)
+
+#get RMSE for model 2b
+
+rmse_2b <- RMSE(obs_2b,pred_2b)
+rmse_2b
+
+##################
+#MODEL C
+##################
+#COMBINE ALL PREDICTED VAL into a VECTOR
+pred_2c = c(model_2c[1], model_2c[2], model_2c[3],
+model_2c[4],
+model_2c[5])
+
+#COMBINE OBSERVED
+obs_2c = c(model_2c[6], model_2c[7], model_2c[8],
+model_2c[9],
+model_2c[10])
+
+#get RMSE for model 2c
+
+rmse_2c <- RMSE(obs_2c,pred_2c)
+rmse_2c
+
+#Standardize the predicted and actual values
+  #for ALL 5 variables
+obs_2c <- stdz(obs_2c)
+pred_2c <- stdz(pred_2c)
+
+#get RMSE for model 2c
+
+rmse_2c <- RMSE(obs_2c,pred_2c)
+rmse_2c
+
+##################
+#MODEL D
+##################
+
+#COMBINE ALL OBSERVED VAL into a VECTOR
+pred_2d = c(model_2d[1], model_2d[2], model_2d[3],
+model_2d[4],
+model_2d[5])
+
+#COMBINE PREDICTED
+obs_2d = c(model_2d[6], model_2d[7], model_2d[8],
+model_2d[9],
+model_2d[10])
+
+#get RMSE for model 2d
+
+rmse_2d <- RMSE(obs_2d,pred_2d)
+rmse_2d
+
+#Standardize the predicted and actual values
+  #for ALL 5 variables
+
+obs_2d <- stdz(obs_2d)
+pred_2d <- stdz(pred_2d)
+
+#get RMSE for model 2d
+
+rmse_2d <- RMSE(obs_2d,pred_2d)
+rmse_2d
+
+
+
+```

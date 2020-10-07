@@ -1,0 +1,1165 @@
+---
+title: "Center Data Processing"
+author: "Emily Bovee"
+date: "1/15/2019"
+output: html_document
+---
+Notes to self on next steps in process
+DONE  (1) Split data into separate Excel files
+DONE  (2) Save as CSVs
+DONE  (3) Import files into R
+DONE  (4) Check variable #s and case #s in each of 10 files
+DONE  (5) Rename variables in each of 10 files
+DONE  (6) Merge into one big file
+      (7) Merge study IDs into this file
+  
+  ## Transform from long to wide within each of 10 individual files
+  
+  
+  
+  
+  
+  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#------------------------
+#Setting working directory
+#------------------------
+  #check what working directory currently is
+getwd()
+
+  #set working directory to point R in the file where the data is
+setwd("/Volumes/Linnen Lab/MSU Engineering/PROJECTS/Emily Dissertation")
+
+  #check to make sure setting the working directory above worked.
+getwd()
+
+#------------------------
+#Loading packages for analysis
+#------------------------
+library(tidyverse)
+library(lubridate)
+
+#------------------------
+# Prep Study ID file for later de-identification
+#------------------------
+#Load in study ID / net ID matching file
+studyIDs <- read_csv("Dissertation Master File - 12.12.18_studyID_NetID_ONLY.csv")
+
+#rename the "Net ID" variable to match the file I'll be joining, which calls it "email"
+studyIDs <- studyIDs %>% 
+  rename(email = net_id)
+```
+##Overview
+  This document includes the processing of the Center data. In its raw form, this dataset was a multi-tab document in which each tab represents a different service provided. 
+  10 tabs were included in this sheet:
+    1. Handshake Activity
+    2. Advising Appointment
+    3. Event Attendance
+    4. Employer Event Attendance
+    5. Career Fair Attendance
+    6. Day After Career Fair Interview
+    7. On-Campus Interviews
+    8. Mock interviews
+    9. Job Applications
+    10. Destination Survey Response.
+    
+    There were also two "info" tabs; one provided information about the whole worksheet, and the other provided information about the "Event Attendance" tab. The first thing I did was to remove those tabs from the spreadsheet and include them as appendices in this document (Appendix 1 and 2, see end of script).
+    
+    Of those 10 tabs, I decided not to include all of the raw data. Rather, I only used datasets numbers
+    2. Advising Appointment
+    3. Event Attendance
+
+    5. Career Fair Attendance
+
+    7. On-Campus Interviews
+    8. Mock Interviews
+    9. Job Applications
+
+More details about why I made this decision to exclude some of the data is included in my Scrivener doc for Ch.4 the results section
+
+## Before processing, create the Semester Date Finder function.
+More details about this function are included in the Advising_Processing_3.2.19.Rmd file.
+This function will be applied to all of the individual datasets in this folder.
+
+```{r}
+#Here, I create the semester date finder function as a precursor step to creating the semester variable
+
+semesterDateFinder = function(
+  startMonth, endMonth, 
+  startMonthDaysToExclude, endMonthDaysToExclude, 
+  yearForRange
+  ){
+  dayMonthDF = expand.grid(1:31, 1:12)
+  names(dayMonthDF) = c('day','month')
+  dayMonthDF$dayMonth = apply(dayMonthDF[,c('day','month')], 1, function(x){paste(x[1],x[2], sep='_')})
+  dayMonthDF = dayMonthDF[dayMonthDF$month>=startMonth & dayMonthDF$month<=endMonth,]
+  dayMonthDF = dayMonthDF[!(dayMonthDF$month==startMonth & dayMonthDF$day %in% startMonthDaysToExclude),]
+  dayMonthDF = dayMonthDF[!(dayMonthDF$month==endMonth & dayMonthDF$day %in% endMonthDaysToExclude),]
+  return(paste(dayMonthDF$dayMonth, yearForRange, sep='_')) }
+
+## Here I create the intermediate objects - one for each semester
+  #For each semester in the data, call the semesterDateFinder function and 
+
+#Summer 2016: Monday 5/16 to Tuesday 8/30
+summer2016 = semesterDateFinder(5, 8, 1:15, 31, 2016)
+
+#Fall 2016: Wednesday 8/31 to Sunday 1/8 
+  ### Spans multiple years, so I call the semesterDateFunction twice
+fall2016 = c(
+  semesterDateFinder(8, 12, 1:30, 32, 2016), # this gets 8/31 to 12/31 dates
+  semesterDateFinder(1, 1, 0, 9:31, 2017) # this gets 1/1 to 1/8 dates
+  )
+
+#Spring 2017: Monday 1/9 to Sunday 5/14
+spring2017 = semesterDateFinder(1, 5, 1:8, 15:31, 2017)
+
+#Summer 2017: Monday 5/15 to Tuesday 8/29
+summer2017 = semesterDateFinder(5, 8, 1:14, 30:31, 2017)
+
+#Fall 2017: Wednesday 8/30 to Sunday 1/7
+fall2017 = c(
+  semesterDateFinder(8, 12, 1:29, 32, 2017),       # this gets 8/31 to 12/31 dates
+  semesterDateFinder(1, 1, 0, 8:31, 2018)          # this gets 1/1 to 1/8 dates
+  )
+
+#Spring 2018: Monday 1/8 to Wednesday 3/21
+    ##### Changed 3.10.2019 - First survey was launched 3/22, so making sure that it takes place before then.
+spring2018 = semesterDateFinder(1, 3, 1:7, 22:31, 2018)
+```
+
+
+##From Tab 2. Processing Center Advising Data
+```{r}
+#Pending to-do on this file:
+      #Check for cancelled appts. - contacted Kylie 3.8.19 around 10:15 a.m.
+
+#------------------------------
+#Read in data file
+#------------------------------
+center_advising_temp <- read_csv("Advising_Appointment.csv")
+
+#------------------------------
+#Renaming Variables
+#------------------------------
+center_advising_temp <- center_advising_temp %>% 
+  rename (email = `Student Email`,
+          advising_date = `Date`,
+          advising_type = `Appointment Type Name`,
+          advising_location = `Location / Career Office`)
+
+#------------------------------
+#Merge Study IDs
+#------------------------------
+
+#merging study IDs to the previously joined data file
+center_advising <- left_join(center_advising_temp, studyIDs, by = "email")
+
+#------------------------------
+#De-identifying the data
+#------------------------------
+#Next, I remove their emails
+
+#Remove the email variable
+drop <- c("email")
+  #check data by looking at it here to make sure I did not keep any identifying data in the data by accident
+
+center_advising <- center_advising %>% 
+  select (-one_of(drop))
+
+#Move the StudyID variable to the front of the dataset
+center_advising <- center_advising %>%
+  select(study_id, everything())
+
+#------------------------------
+#transform date from its current format (ymd) to day-month-year
+#------------------------------
+  #Step 1 in date transformation: Split date into year-month-day
+center_advising <- 
+  center_advising %>% 
+  mutate(year = year(advising_date),
+         month = month(advising_date),
+         day = day(advising_date))
+
+  #Step 2 in date transformation: Create dmy vaiable (date, month, year) using the component variables I created
+
+center_advising$dmy = with(center_advising, paste(day, month, year, sep='_'))
+
+#------------------------------
+#Create the semester variable
+#------------------------------
+center_advising$semester = NA  #First populate with NAs for everyone, then update the variable according to the syntax below
+
+#2015
+  #n/a no data from 2015
+
+#2016
+  #two semesters: summer, fall 2016
+center_advising$semester[center_advising$dmy %in% summer2016] = 'Summer 2016'
+center_advising$semester[center_advising$dmy %in% fall2016] = 'Fall 2016'
+
+#2017
+  #three semesters: spring, summer, fall 2017
+center_advising$semester[center_advising$dmy %in% spring2017] = 'Spring 2017'
+center_advising$semester[center_advising$dmy %in% summer2017] = 'Summer 2017'
+center_advising$semester[center_advising$dmy %in% fall2017] = 'Fall 2017'
+
+#2018
+  #one semester: Spring 2018
+center_advising$semester[center_advising$dmy %in% spring2018] = 'Spring 2018'
+
+# remove students who met with career advisor after spring 2018
+  #they have no value for the "semester" variable
+    #first count how many people are NA so I know how many to expect to delete in this step
+        #how many NAs are there?
+              # center_advising %>% 
+              #    count(is.na(center_advising$semester))
+              #     #512 rows have data, 108 rows are NA
+     #second, remove those people who are NA     
+center_advising = center_advising[!is.na(center_advising$semester),]
+      #this yields a dataset of 512 observations, as I expected
+
+#------------------------------
+#Create student-semester variable
+#------------------------------
+center_advising <- center_advising %>% 
+                    mutate(StudentSemester = paste(study_id, semester, sep = '_'))
+
+#------------------------------
+#Look at frequencies for the newly created student-semester variable to see if doing a count makes sense
+#------------------------------
+
+plot(density(table(center_advising$StudentSemester)))
+
+#After looking at that plot, yes it does look like there is some variability
+  #in other words, there's some variability in # of times per semester a student met with a career advisor
+
+#therefore, it makes sense to do a count
+
+#------------------------------
+# Create an Count Variable - By Semester
+#------------------------------
+#Here, I create a count variable: how many times within a semester did each student meet an advisor?
+
+center_advising <- center_advising %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester - if a student met advisor 7 times, they would have 7 of those- this counts that
+  mutate(centeradvising_Count = n())
+
+#Check freqs of newly created variable
+questionr::freq(center_advising$centeradvising_Count)
+  #this shows that most people just met just once within a given semester, but 2 was also pretty common.
+  #other values spanned from 3-6
+
+#------------------------------
+# Now drop other variables that I don't need
+#------------------------------
+center_advising <- center_advising %>% 
+  select(c(study_id, semester, centeradvising_Count))
+
+#------------------------------
+# Transform data from long to wide
+#------------------------------
+#Keep only unique values of StudentSemester, drop all others
+  #that's a unique identifier
+
+center_advising_unique <- center_advising %>% 
+             dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for each semester advising count
+
+center_advising_final <- spread(center_advising_unique %>% 
+                    group_by(study_id) %>% 
+                      select(study_id, semester, centeradvising_Count), semester, centeradvising_Count) 
+
+#Rename the variables so that they make sense in the merged dataset
+center_advising_final <- center_advising_final %>% 
+                    rename(center_adv_F16 = `Fall 2016`,	
+                           center_adv_F17 = `Fall 2017`,	
+                           center_adv_S17 = `Spring 2017`,
+                           center_adv_S18 = `Spring 2018`,
+                           center_adv_U16 = `Summer 2016`,
+                           center_adv_U17 = `Summer 2017`)
+#------------------------------
+##FURTHER READING ON DATE MANIPULATION
+#------------------------------
+#More info on the lubridate package itself and what it can do is at this link:
+  # https://cran.r-project.org/web/packages/lubridate/lubridate.pdf 
+
+#More info on formatting dates using lubridate is at this link:
+  #http://daniellequinn.github.io/RLessons/FormattingDates/FormattingDates.html
+
+```
+
+
+
+##From Tab 3. Processing Center Event Attendance
+```{r}
+center_event_temp <- read_csv("Event_Attendance.csv")
+
+#Renaming Variables
+center_event_temp <- center_event_temp %>%
+  rename (email = `Student Attendees Email`,
+          center_event_date = `Events Date`,
+          center_event_name = `Events Name`,
+          center_event_type = `Event Type Name`,
+          center_event_location = `Location Full Address`)
+
+#------------------------------
+#Merge Study IDs
+#------------------------------
+
+#merging study IDs to the previously joined data file
+center_event <- left_join(center_event_temp, studyIDs, by = "email")
+
+#------------------------------
+#De-identifying the data
+#------------------------------
+#Next, I remove their emails
+
+#Remove the email variable
+drop <- c("email")
+  #check data by looking at it here to make sure I did not keep any identifying data in the data by accident
+
+center_event <- center_event %>% 
+  select (-one_of(drop))
+
+#Move the StudyID variable to the front of the dataset
+center_event <- center_event %>%
+  select(study_id, everything())
+
+#------------------------------
+#transform date from its current format (ymd) to day-month-year
+#------------------------------
+  #Step 1 in date transformation: Split date into year-month-day
+center_event <- 
+  center_event %>% 
+  mutate(year = year(center_event_date),
+         month = month(center_event_date),
+         day = day(center_event_date))
+
+  #Step 2 in date transformation: Create dmy vaiable (date, month, year) using the component variables I created
+
+center_event$dmy = with(center_event, paste(day, month, year, sep='_'))
+
+#------------------------------
+#Create the semester variable
+#------------------------------
+center_event$semester = NA  #First populate with NAs for everyone, then update the variable according to the syntax below
+
+#2015
+  #n/a no data from 2015
+
+#2016
+  #two semesters: summer, fall 2016
+center_event$semester[center_event$dmy %in% summer2016] = 'Summer 2016'
+center_event$semester[center_event$dmy %in% fall2016] = 'Fall 2016'
+
+#2017
+  #three semesters: spring, summer, fall 2017
+center_event$semester[center_event$dmy %in% spring2017] = 'Spring 2017'
+center_event$semester[center_event$dmy %in% summer2017] = 'Summer 2017'
+center_event$semester[center_event$dmy %in% fall2017] = 'Fall 2017'
+
+#2018
+  #one semester: Spring 2018
+center_event$semester[center_event$dmy %in% spring2018] = 'Spring 2018'
+
+# remove students who met with career advisor after spring 2018
+  #they have no value for the "semester" variable
+    #first count how many people are NA so I know how many to expect to delete in this step
+        #how many NAs are there?
+               # center_event %>% 
+               #    count(is.na(center_event$semester))
+                    #there are 221 NAs and 810 not NAs
+     #second, remove those people who are NA     
+center_event = center_event[!is.na(center_event$semester),]
+      #this yields a dataset of 810 observations, as I expected
+
+#------------------------------
+#Create student-semester variable
+#------------------------------
+center_event <- center_event %>% 
+                    mutate(StudentSemester = paste(study_id, semester, sep = '_'))
+
+#------------------------------
+#Look at frequencies for the newly created student-semester variable to see if doing a count makes sense
+#------------------------------
+
+plot(density(table(center_event$StudentSemester)))
+
+#After looking at that plot, yes it does look like there is some variability
+  #in other words, there's some variability in # of times per semester a student met with a career advisor
+    #ranging all the way up to 9!
+#therefore, it makes sense to do a count
+
+#------------------------------
+# Create an Count Variable - By Semester
+#------------------------------
+#Here, I create a count variable: how many times within a semester did each student meet an advisor?
+
+center_event <- center_event %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester - if a student met advisor 7 times, they would have 7 of those- this counts that
+  mutate(centerEvent_Count = n())
+
+#Check freqs of newly created variable
+questionr::freq(center_event$centerEvent_Count)
+  #see whether it makes sense to do a count
+
+#------------------------------
+# Now drop other variables that I don't need
+#------------------------------
+center_event <- center_event %>% 
+  select(c(study_id, semester, centerEvent_Count))
+
+#------------------------------
+# Transform data from long to wide
+#------------------------------
+#Keep only unique values of StudentSemester, drop all others
+  #that's a unique identifier
+
+center_event_unique <- center_event %>% 
+             dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for each semester advising count
+
+center_event_final <- spread(center_event_unique %>% 
+                    group_by(study_id) %>% 
+                      select(study_id, semester, centerEvent_Count), semester, centerEvent_Count) 
+
+#Rename the variables so that they make sense in the merged dataset
+center_event_final <- center_event_final %>% 
+                    rename(center_event_F16 = `Fall 2016`,	
+                           center_event_F17 = `Fall 2017`,	
+                           center_event_S17 = `Spring 2017`,
+                           center_event_S18 = `Spring 2018`,
+                           center_event_U16 = `Summer 2016`,
+                           center_event_U17 = `Summer 2017`)
+
+
+```
+
+##From Tab 5. Processing Career Fair Attendance
+```{r}
+career_fair_temp <- read_csv("Career_Fair.csv")
+
+career_fair_temp <- career_fair_temp %>% 
+  rename (email = `Student Attendees Email`,
+          career_fair_name = `Career Fair Name`,
+          career_fair_session = `Career Fair Session Session Name`,
+          career_fair_date = `Career Fair Session Session Start Date`)
+
+#------------------------------
+#Merge Study IDs
+#------------------------------
+
+#merging study IDs to the previously joined data file
+career_fair <- left_join(career_fair_temp, studyIDs, by = "email")
+
+#------------------------------
+#De-identifying the data
+#------------------------------
+#Next, I remove their emails
+
+#Remove the email variable
+drop <- c("email")
+  #check data by looking at it here to make sure I did not keep any identifying data in the data by accident
+
+career_fair <- career_fair %>% 
+  select (-one_of(drop))
+
+#Move the StudyID variable to the front of the dataset
+career_fair <- career_fair %>%
+  select(study_id, everything())
+
+#------------------------------
+#transform date from its current format to day-month-year
+#------------------------------
+#Step 1 in date transformation: currently MM/DD/YYYY  
+career_fair$career_fair_date <- as.Date(career_fair$career_fair_date, "%m/%d/%y")
+
+str(career_fair$career_fair_date)
+
+#Step 2 in date transformation: Split date into year-month-day
+career_fair <- 
+  career_fair %>% 
+  mutate(year = year(career_fair_date),
+         month = month(career_fair_date),
+         day = day(career_fair_date))
+
+  #Step 3 in date transformation: Create dmy vaiable (date, month, year) using the component variables I created
+career_fair$dmy = with(career_fair, paste(day, month, year, sep='_'))
+
+#------------------------------
+#Create the semester variable
+#------------------------------
+career_fair$semester = NA  #First populate with NAs for everyone, then update the variable according to the syntax below
+
+#2015
+  #n/a no data from 2015
+
+#2016
+  #two semesters: summer, fall 2016
+career_fair$semester[career_fair$dmy %in% summer2016] = 'Summer 2016'
+career_fair$semester[career_fair$dmy %in% fall2016] = 'Fall 2016'
+
+#2017
+  #three semesters: spring, summer, fall 2017
+career_fair$semester[career_fair$dmy %in% spring2017] = 'Spring 2017'
+career_fair$semester[career_fair$dmy %in% summer2017] = 'Summer 2017'
+career_fair$semester[career_fair$dmy %in% fall2017] = 'Fall 2017'
+
+#2018
+  #one semester: Spring 2018
+career_fair$semester[career_fair$dmy %in% spring2018] = 'Spring 2018'
+
+# remove students who met with career advisor after spring 2018
+  #they have no value for the "semester" variable
+    #first count how many people are NA so I know how many to expect to delete in this step
+        #how many NAs are there?
+         #      career_fair %>% 
+           #       count(is.na(career_fair$semester))
+                    #there are 771 NAs and 2794  not NAs
+     #second, remove those people who are NA     
+career_fair <- career_fair[!is.na(career_fair$semester),]
+      #this yields a dataset of 2794 observations, as I expected
+
+#------------------------------
+#Create student-semester variable
+#------------------------------
+career_fair <- career_fair %>% 
+                    mutate(StudentSemester = paste(study_id, semester, sep = '_'))
+
+#------------------------------
+#Look at frequencies for the newly created student-semester variable to see if doing a count makes sense
+#------------------------------
+
+plot(density(table(career_fair$StudentSemester)))
+
+#After looking at that plot, yes it does look like there is some variability
+  #in other words, there's some variability in # of times per semester a student attended a career fair
+
+#therefore, it makes sense to do a count
+
+#------------------------------
+# Create an Count Variable - By Semester
+#------------------------------
+#Here, I create a count variable: how many times within a semester did each student meet an advisor?
+
+career_fair <- career_fair %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester - if a student met advisor 7 times, they would have 7 of those- this counts that
+  mutate(careerfair_Count = n())
+
+#Check freqs of newly created variable
+questionr::freq(career_fair$careerfair_Count)
+  #see whether it makes sense to do a count
+    #yes, 1-7
+
+#------------------------------
+# Now drop other variables that I don't need
+#------------------------------
+career_fair <- career_fair %>% 
+  select(c(study_id, semester, careerfair_Count))
+
+#------------------------------
+# Transform data from long to wide
+#------------------------------
+#Keep only unique values of StudentSemester, drop all others
+  #that's a unique identifier
+
+career_fair_unique <- career_fair %>% 
+             dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for each semester advising count
+
+career_fair_final <- spread(career_fair_unique %>% 
+                    group_by(study_id) %>% 
+                    select(study_id, semester, careerfair_Count), semester, careerfair_Count) 
+
+#Rename the variables so that they make sense in the merged dataset
+career_fair_final <- career_fair_final %>% 
+                    rename(career_fair_F16 = `Fall 2016`,	
+                           career_fair_F17 = `Fall 2017`,	
+                           career_fair_S17 = `Spring 2017`,
+                           career_fair_S18 = `Spring 2018`)
+#FURTHER READING
+  #Date Conversion and the as.Date that I used in this section
+# https://www.statmethods.net/input/dates.html
+
+```
+
+##From Tab 7. Processing On-Campus Interviews
+```{r}
+oncampus_int_temp <- read_csv("On_Campus_Interviews.csv")
+
+oncampus_int_temp <- oncampus_int_temp %>% 
+  rename(email = `Students (Checked In) Email`,
+         oncampus_int_employer = `Employer Name`,
+         oncampus_int_event = `Schedule Identifier`,
+         oncampus_int_date = `Interview Schedule Date`,
+         oncampus_int_type = `Interview Schedule Type Name`,
+         oncampus_int_careercenter = `Career Center Name`
+         )
+
+#------------------------------
+#Merge Study IDs
+#------------------------------
+
+#merging study IDs to the previously joined data file
+oncampus_int <- left_join(oncampus_int_temp, studyIDs, by = "email")
+
+#------------------------------
+#De-identifying the data
+#------------------------------
+#Next, I remove their emails
+
+#Remove the email variable
+drop <- c("email")
+  #check data by looking at it here to make sure I did not keep any identifying data in the data by accident
+
+oncampus_int <- oncampus_int %>% 
+  select (-one_of(drop))
+
+#Move the StudyID variable to the front of the dataset
+oncampus_int <- oncampus_int %>%
+  select(study_id, everything())
+
+#------------------------------
+#transform date from its current format to day-month-year
+#------------------------------
+#Step 1 in date transformation: currently MM/DD/YYYY  
+oncampus_int$oncampus_int_date <- as.Date(oncampus_int$oncampus_int_date, "%m/%d/%y")
+
+str(oncampus_int$oncampus_int_date)
+
+#Step 2 in date transformation: Split date into year-month-day
+oncampus_int <- 
+  oncampus_int %>% 
+  mutate(year = year(oncampus_int_date),
+         month = month(oncampus_int_date),
+         day = day(oncampus_int_date))
+
+  #Step 3 in date transformation: Create dmy vaiable (date, month, year) using the component variables I created
+oncampus_int$dmy = with(oncampus_int, paste(day, month, year, sep='_'))
+
+#------------------------------
+#Create the semester variable
+#------------------------------
+oncampus_int$semester = NA  #First populate with NAs for everyone, then update the variable according to the syntax below
+
+#2015
+  #n/a no data from 2015
+
+#2016
+  #two semesters: summer, fall 2016
+oncampus_int$semester[oncampus_int$dmy %in% summer2016] = 'Summer 2016'
+oncampus_int$semester[oncampus_int$dmy %in% fall2016] = 'Fall 2016'
+
+#2017
+  #three semesters: spring, summer, fall 2017
+oncampus_int$semester[oncampus_int$dmy %in% spring2017] = 'Spring 2017'
+oncampus_int$semester[oncampus_int$dmy %in% summer2017] = 'Summer 2017'
+oncampus_int$semester[oncampus_int$dmy %in% fall2017] = 'Fall 2017'
+
+#2018
+  #one semester: Spring 2018
+oncampus_int$semester[oncampus_int$dmy %in% spring2018] = 'Spring 2018'
+
+# remove students who met with career advisor after spring 2018
+  #they have no value for the "semester" variable
+    #first count how many people are NA so I know how many to expect to delete in this step
+        #how many NAs are there?
+               oncampus_int %>% 
+                  count(is.na(oncampus_int$semester))
+                    #there are 640 NAs and 1187  not NAs
+     #second, remove those people who are NA     
+oncampus_int <- oncampus_int[!is.na(oncampus_int$semester),]
+      #this yields a dataset of 1187 observations, as I expected
+
+#------------------------------
+#Keep only people who have a study ID
+#------------------------------
+  #count how many rows have NO study ID
+oncampus_int %>%
+  count(is.na(oncampus_int$study_id))
+  #891 NAs, so those people should all be deleted because they are not part of my study
+    #this should leave me with 296 observations
+  
+oncampus_int <- oncampus_int %>%
+        filter(!is.na(oncampus_int$study_id))
+    #yes, 296 observations
+  
+#------------------------------
+#Create student-semester variable
+#------------------------------
+oncampus_int <- oncampus_int %>% 
+                    mutate(StudentSemester = paste(study_id, semester, sep = '_'))
+
+#------------------------------
+#Look at frequencies for the newly created student-semester variable to see if doing a count makes sense
+#------------------------------
+
+plot(density(table(oncampus_int$StudentSemester)))
+
+#After looking at that plot, yes it does look like there is some variability
+  #in other words, there's some variability
+#therefore, it makes sense to do a count
+
+#------------------------------
+# Create an Count Variable - By Semester
+#------------------------------
+#Here, I create a count variable: how many times within a semester did each student meet an advisor?
+
+oncampus_int <- oncampus_int %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester - if a student met advisor 7 times, they would have 7 of those- this counts that
+  mutate(oncampusInt_Count = n())
+
+#Check freqs of newly created variable
+questionr::freq(oncampus_int$oncampusInt_Count)
+  #see whether it makes sense to do a count
+    #yes, 1-5
+
+#------------------------------
+# Now drop other variables that I don't need
+#------------------------------
+oncampus_int <- oncampus_int %>% 
+  select(c(study_id, semester,oncampusInt_Count))
+
+#------------------------------
+# Transform data from long to wide
+#------------------------------
+#Keep only unique values of StudentSemester, drop all others
+  #that's a unique identifier
+
+oncampus_int_unique <- oncampus_int %>% 
+             dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for each semester advising count
+
+oncampus_int_final <- spread(oncampus_int_unique %>% 
+                    group_by(study_id) %>% 
+                      select(study_id, semester, oncampusInt_Count), semester, oncampusInt_Count) 
+
+#Rename the variables so that they make sense in the merged dataset
+oncampus_int_final  <- oncampus_int_final  %>% 
+                    rename(oncampus_int_F16 = `Fall 2016`,	
+                           oncampus_int_F17 = `Fall 2017`,	
+                           oncampus_int_S17 = `Spring 2017`,
+                           oncampus_int_S18 = `Spring 2018`)
+
+#FURTHER READING
+  #Date Conversion and the as.Date that I used in this section
+# https://www.statmethods.net/input/dates.html
+
+
+```
+
+## 8. Processing Mock Interviews
+```{r}
+mock_int_temp <- read_csv("Mock_Interviews.csv")
+
+#Renaming variables
+mock_int_temp <- mock_int_temp %>% 
+  rename(email = `Students (Checked In) Email`,
+         mock_int_employer = `Employer Name`,
+         mock_int_type = `Schedule Identifier`,
+         mock_int_date = `Interview Schedule Date`,
+         mock_int_open = `Interview Schedule Type Name`,
+         mock_int_careercentername = `Career Center Name`)
+
+#------------------------------
+#Merge Study IDs
+#------------------------------
+
+#merging study IDs to the previously joined data file
+mock_int <- left_join(mock_int_temp, studyIDs, by = "email")
+
+#------------------------------
+#De-identifying the data
+#------------------------------
+#Next, I remove their emails
+
+#Remove the email variable
+drop <- c("email")
+  #check data by looking at it here to make sure I did not keep any identifying data in the data by accident
+
+mock_int <- mock_int %>% 
+  select (-one_of(drop))
+
+#Move the StudyID variable to the front of the dataset
+mock_int <- mock_int %>%
+  select(study_id, everything())
+
+#------------------------------
+#transform date from its current format to day-month-year
+#------------------------------
+#Step 1 in date transformation: currently MM/DD/YYYY  
+mock_int$mock_int_date <- as.Date(mock_int$mock_int_date, "%m/%d/%y")
+
+str(mock_int$mock_int_date)
+
+#Step 2 in date transformation: Split date into year-month-day
+mock_int <- 
+  mock_int %>% 
+  mutate(year = year(mock_int_date),
+         month = month(mock_int_date),
+         day = day(mock_int_date))
+
+  #Step 3 in date transformation: Create dmy vaiable (date, month, year) using the component variables I created
+mock_int$dmy = with(mock_int, paste(day, month, year, sep='_'))
+
+#------------------------------
+#Create the semester variable
+#------------------------------
+mock_int$semester = NA  #First populate with NAs for everyone, then update the variable according to the syntax below
+
+#2015
+  #n/a no data from 2015
+
+#2016
+  #two semesters: summer, fall 2016
+mock_int$semester[mock_int$dmy %in% summer2016] = 'Summer 2016'
+mock_int$semester[mock_int$dmy %in% fall2016] = 'Fall 2016'
+
+#2017
+  #three semesters: spring, summer, fall 2017
+mock_int$semester[mock_int$dmy %in% spring2017] = 'Spring 2017'
+mock_int$semester[mock_int$dmy %in% summer2017] = 'Summer 2017'
+mock_int$semester[mock_int$dmy %in% fall2017] = 'Fall 2017'
+
+#2018
+  #one semester: Spring 2018
+mock_int$semester[mock_int$dmy %in% spring2018] = 'Spring 2018'
+
+# remove students who met with career advisor after spring 2018
+  #they have no value for the "semester" variable
+    #first count how many people are NA so I know how many to expect to delete in this step
+        #how many NAs are there?
+               mock_int %>% 
+                  count(is.na(mock_int$semester))
+                    #there are 66 NAs and 192 not NAs
+     #second, remove those people who are NA     
+               
+mock_int <- mock_int[!is.na(mock_int$semester),]
+      #this yields a dataset of 192 observations, as I expected
+
+#------------------------------
+#Keep only people who have a study ID
+#------------------------------
+  #count how many rows have NO study ID
+mock_int %>%
+  count(is.na(mock_int$study_id))
+  #145 NAs, so those people should all be deleted because they are not part of my study
+    #this should leave me with 47 observations
+  
+mock_int <- mock_int %>%
+        filter(!is.na(mock_int$study_id))
+    #yes, 47 observations
+  
+#------------------------------
+#Create student-semester variable
+#------------------------------
+mock_int <- mock_int %>% 
+                    mutate(StudentSemester = paste(study_id, semester, sep = '_'))
+
+#------------------------------
+#Look at frequencies for the newly created student-semester variable to see if doing a count makes sense
+#------------------------------
+
+plot(density(table(mock_int$StudentSemester)))
+
+#After looking at that plot, there are only one or two per semester
+
+#------------------------------
+# Create an Count Variable - By Semester
+#------------------------------
+#Here, I create a count variable: how many times within a semester did each student meet an advisor?
+
+mock_int <- mock_int %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester - if a student met advisor 7 times, they would have 7 of those- this counts that
+  mutate(mockInt_Count = n())
+
+#Check freqs of newly created variable
+questionr::freq(mock_int$mockInt_Count)
+  #only 2
+
+#------------------------------
+# Now drop other variables that I don't need
+#------------------------------
+mock_int <- mock_int %>% 
+  select(c(study_id, semester,mockInt_Count))
+
+#------------------------------
+# Transform data from long to wide
+#------------------------------
+#Keep only unique values of StudentSemester, drop all others
+  #that's a unique identifier
+
+mock_int_unique <- mock_int %>% 
+             dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for each semester advising count
+
+mock_int_final <- spread(mock_int_unique %>% 
+                    group_by(study_id) %>% 
+                      select(study_id, semester, mockInt_Count), semester, mockInt_Count) 
+
+#Rename the variables so that they make sense in the merged dataset
+mock_int_final  <- mock_int_final  %>% 
+                    rename(mockint_F16 = `Fall 2016`,	
+                           mockint_F17 = `Fall 2017`,	
+                           mockint_S17 = `Spring 2017`,
+                           mockint_S18 = `Spring 2018`)
+
+```
+
+
+
+
+
+##From Tab 9. Processing Job Applications
+```{r}
+jobapp_temp <- read_csv("Job_Apps.csv")
+
+jobapp_temp <- jobapp_temp %>% 
+  rename(email = `Applicant (student) Email`,
+         jobapp_employer = `Employer Name`,
+         jobapp_title = `Job Title`,
+         jobapp_type = `Job Type Name`,
+         jobapp_location =`Job Locations Full Address`,
+         jobapp_date = `Applications Created At Date`)
+
+#------------------------------
+#Merge Study IDs
+#------------------------------
+
+#merging study IDs to the previously joined data file
+jobapp <- left_join(jobapp_temp, studyIDs, by = "email")
+
+#------------------------------
+#De-identifying the data
+#------------------------------
+#Next, I remove their emails
+
+#Remove the email variable
+drop <- c("email")
+  #check data by looking at it here to make sure I did not keep any identifying data in the data by accident
+
+jobapp <- jobapp %>% 
+  select (-one_of(drop))
+
+#Move the StudyID variable to the front of the dataset
+jobapp <- jobapp %>%
+  select(study_id, everything())
+
+#------------------------------
+#transform date from its current format to day-month-year
+#------------------------------
+#Step 1 in date transformation: currently MM/DD/YYYY  
+jobapp$jobapp_date <- as.Date(jobapp$jobapp_date, "%m/%d/%y")
+
+str(jobapp$jobapp_date)
+
+#Step 2 in date transformation: Split date into year-month-day
+jobapp <- 
+  jobapp %>% 
+  mutate(year = year(jobapp_date),
+         month = month(jobapp_date),
+         day = day(jobapp_date))
+
+  #Step 3 in date transformation: Create dmy vaiable (date, month, year) using the component variables I created
+jobapp$dmy = with(jobapp, paste(day, month, year, sep='_'))
+
+#------------------------------
+#Create the semester variable
+#------------------------------
+jobapp$semester = NA  #First populate with NAs for everyone, then update the variable according to the syntax below
+
+#2015
+  #n/a no data from 2015
+
+#2016
+  #two semesters: summer, fall 2016
+jobapp$semester[jobapp$dmy %in% summer2016] = 'Summer 2016'
+jobapp$semester[jobapp$dmy %in% fall2016] = 'Fall 2016'
+
+#2017
+  #three semesters: spring, summer, fall 2017
+jobapp$semester[jobapp$dmy %in% spring2017] = 'Spring 2017'
+jobapp$semester[jobapp$dmy %in% summer2017] = 'Summer 2017'
+jobapp$semester[jobapp$dmy %in% fall2017] = 'Fall 2017'
+
+#2018
+  #one semester: Spring 2018
+jobapp$semester[jobapp$dmy %in% spring2018] = 'Spring 2018'
+
+# remove students who met with career advisor after spring 2018
+  #they have no value for the "semester" variable
+    #first count how many people are NA so I know how many to expect to delete in this step
+        #how many NAs are there?
+               jobapp %>% 
+                  count(is.na(jobapp$semester))
+                    #there are 12,827 NAs and 21,923 not NAs
+     #second, remove those people who are NA     
+               
+jobapp <- jobapp[!is.na(jobapp$semester),]
+      #this yields a dataset of 21,923 observations, as I expected
+
+#------------------------------
+#Keep only people who have a study ID
+#------------------------------
+  #count how many rows have NO study ID
+jobapp %>%
+  count(is.na(jobapp$study_id))
+  #0 NAs
+  
+#------------------------------
+#Create student-semester variable
+#------------------------------
+jobapp <- jobapp %>% 
+                    mutate(StudentSemester = paste(study_id, semester, sep = '_'))
+
+#------------------------------
+#Look at frequencies for the newly created student-semester variable to see if doing a count makes sense
+#------------------------------
+
+plot(density(table(jobapp$StudentSemester)))
+
+#After looking at that plot, there are many different possible values for # of jobs applied to by semester
+
+#------------------------------
+# Create an Count Variable - By Semester
+#------------------------------
+#Here, I create a count variable: how many times within a semester did each student meet an advisor?
+
+jobapp <- jobapp %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester - if a student met advisor 7 times, they would have 7 of those- this counts that
+  mutate(jobapp_Count = n())
+
+#Check freqs of newly created variable
+questionr::freq(jobapp$jobapp_Count)
+  #The frequencies of the job apps are CRAZY - one student applied to 350+ jobs in one semester. And I looked at the raw data and it's true.
+  #therefore, I'll only use the count by semester.
+#------------------------------
+# Now drop other variables that I don't need
+#------------------------------
+jobapp <- jobapp %>% 
+  select(c(study_id, semester,jobapp_Count))
+
+#------------------------------
+# Transform data from long to wide
+#------------------------------
+#Keep only unique values of StudentSemester, drop all others
+  #that's a unique identifier
+
+jobapp_unique <- jobapp %>% 
+             dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for each semester advising count
+
+jobapp_final <- spread(jobapp_unique %>% 
+                    group_by(study_id) %>% 
+                      select(study_id, semester, jobapp_Count), semester, jobapp_Count) 
+
+#Rename the variables so that they make sense in the merged dataset
+jobapp_final <- jobapp_final %>% 
+                    rename(jobapp_F16 = `Fall 2016`,	
+                           jobapp_F17 = `Fall 2017`,	
+                           jobapp_S17 = `Spring 2017`,
+                           jobapp_S18 = `Spring 2018`,
+                           jobapp_U16 = `Summer 2016`,
+                           jobapp_U17 = `Summer 2017`)
+
+#Helpful info on spread here
+# https://stackoverflow.com/questions/29775461/how-can-i-spread-repeated-measures-of-multiple-variables-into-wide-format
+
+```
+
+## PART 2 Merging
+Here, I merge the 6 Center datasets together.
+
+```{r}
+#datasets to merge 
+  
+center_processed <-full_join(center_advising_final,  center_event_final, by = "study_id") %>% 
+  full_join(career_fair_final, by = "study_id") %>% 
+  full_join(oncampus_int_final, by = "study_id") %>% 
+  full_join(mock_int_final, by = "study_id") %>% 
+  full_join(jobapp_final, by = "study_id")  
+  
+  
+```
+##Saving the result as a csv
+
+```{r}
+write_csv(center_processed, "center_processed.csv")
+```
+
+
+#########################################################################################################################
+## Appendix 1:
+## Description of the Data
+
+Here is the information that I received about this dataset from Kylie on 1.11.19:
+Handshake Activity - Indicates if the student has logged in to Handshake, the last login date and their total logins to Handshake 
+
+Advising Appointment -  Data includes date, appointment reason and location. This data includes appointment data from all career centers across campus.
+
+Event Attendance - Data includes date, event name and type of event. These events are coordinated by various career offices around campus. Event type definitions on seperate tab. 
+
+Employer Events Attendance - Data includes date, event name and type of event. These events are coordinated by employer. Career Offices just reserve space and promote the event to students. Note; we Engineering) stopped collecting attendance at these events last spring and the majority of career services does not collect this data. 
+
+Career Fair Attendance - Data includes fair name and date of event. Often fairs have multiple days so the Session is referring to which day of the fair the student is attending. 
+
+Day After Career Fair Interview - Data includes name, date and interview details. Initially we did not collect company name which is why that is missing from some lines. 
+
+On-Campus Interviews - Data includes name, interview date, company, schedule type (see below) and career center. 
+
+Mock Interviews - Data includes name, interview date, company, schedule type (see below) and career center. These are coordinated by Career Services staff but conducted by real employers. 
+
+Job Applications - Data includes name, compay, position, position type, position location and application date.
+
+Destination Survey - The College of Engineering utilized Handshake to collect placement data from graduating seniors. The rest of Career Services uses a different system. Only student who apply for graduation from the College of Engineering are invited to take the survey. All data is provided by the students. 
+
+____________________________________________
+For more details on the different office locations go to: https://careernetwork.msu.edu/services-locations/contact-us.html
+
+Interview locations - Career Services @ the Stadium (host all non-business interviews), Student Services Building (SSB) (hosts overflow from Career Services @ Stadium), Lear Center + Graduate Career Management (hosts all business focused interviews)
+
+Type of Interview Schedules: Open-if a student meets the company requirements they can schedule an interview, Room Only-the company has collected candidates and is contacting the students to create a schedule, Pre-select-students apply to a posting in Handshake and the employer can invite them to schedule an interview through Handshake, Pre-Select Continuous-Same as pre-select but students can be "invited" during a longer/continuous period
+
+
+
+## Appendix 2:
+## Description of the Data
+## Info about Center Events:
+  Classroom Presentation: Invited Classroom Presentation by CSN staff member or classroom presentations with employers that is set up by CSN. If a CSN staff member is presenting or organizing the classroom presentation for an employer, check this box, and utilize the SSB as the proper career center. 
+When entering these presentations, please select invite only on the events page (this ensures that students can’t search for and view these in their event area of Handshake) 
+
+Employer On-Site: Site visits to an employer. Could include Career Exposure On-the-road events
+
+Info Session: Employer focused event. This will include standard information sessions, information tables, hallway events, coffee chats, resume critiques, etc. This should be used when information is being presented to a student about a company, opportunity, etc. If the purpose of the event is to engage with an employer in a more informal manner, you would want to label the event a networking event. 
+
+Mock Interview: This is used only when arranging a group mock interview session, or to promote the mock interview sessions that are currently listed as job postings or OCR events. Classroom presentations where mock interviews are held would be labeled as classroom presentations. 
+
+Networking: Events where engaging with employers is the purpose; i.e. mix and mingles, pre-fair networking events. If the primary purpose is to present information to a student, please label the event an info session. 
+
+Speaker/Panel: Events with 1 or more employers, alumni or staff. This would not include invited classroom presentations.
+
+Virtual Session: Web based presentations, employer presentations or events. Also use to promote virtual career fairs not organized by our office (.i.e. Big 10 virtual career fair). 
+
+Workshop: Self organized presentations (i.e career conference, career exposure (if it doesn’t fit into panel, on-site, or networking) or events where we partner with student organization.
+ 
+Other: AOP, POP, Green and White Days, College Colloquiums, Admission events, or other short informational sessions or promotion of career services. This should primarily used when the targeted audience is not represented in the Handshake system (not currently enrolled students), or when the interaction with current students is brief ( i.e. when you go to promote an event or career services in a class for 10 minutes). When entering these, please either select invite only on the events page (this ensures that students cannot view or select these events in their event section of Handshake). 
+
+
+##Appendix 3: Helpful resources
+R for Data Science book - chapter about relational data
+  https://r4ds.had.co.nz/relational-data.html
+
+Ungrouping after grouping by just one variable
+  - this lets me drop the grouping variable later
+  https://stackoverflow.com/questions/45368924/ungroup-after-grouping-by-just-one-variable-in-dplyr 
+  
+Reorder variables in dataframe
+https://github.com/tidyverse/dplyr/issues/1188

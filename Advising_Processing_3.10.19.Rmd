@@ -1,0 +1,402 @@
+---
+title: "Academic Advising Data Processing"
+author: "Emily Bovee"
+date: "2/5/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview of this Document
+
+This document is the processing file for academic advising. In its raw form, this dataset is one large file that has a separate row for each advising appointment. All data are contained within one sheet of the Excel file.
+
+The general workflow for my processing is as follows:
+(1) Read files
+(2) Merge with study IDs
+(3) Deidentify - delete or recode variables with personally identifiable information
+(4) Remove students who are not part of my study
+
+## Set up Working Directory
+```{r}
+
+# if needed to clear enviro:
+rm(list=ls())
+
+  #check what working directory currently is
+getwd()
+
+  #set working directory to point R in the file where the data is
+setwd("/Volumes/Linnen Lab/MSU Engineering/PROJECTS/Emily Dissertation")
+
+  #check to make sure setting the working directory above worked.
+getwd()
+
+
+```
+
+## Read Data and Load Packages for Analysis
+
+```{r}
+#library(devtools)
+#install_github("elbersb/tidylog")
+
+#Loading packages for analysis
+library(tidyverse)
+library(readxl)
+library(tidylog)
+library(lubridate)
+library(questionr)
+library(beepr)
+
+#Reading in the data file, and telling it to skip 2 rows because it is not real data
+  #the first two rows of our file have information about the person who pulled the data and when
+advising <-read_excel("advising_raw.xls", skip = 2)
+
+#Reading in the key file to match study IDs with this advising data
+studyIDs <- read_excel("Dissertation Master File - 12.12.18.xlsx") 
+beep("coin")
+
+#Within that newly created studyIDs file, renaming variables for easier merge later
+studyIDs <- studyIDs %>% 
+  rename(study_id = `Study ID`,
+         net_id = `Net ID`,
+         first = `First name`,
+         last = `Last name`)
+```
+
+
+## Merge Advising Data with Study IDs
+
+```{r}
+#Renaming variables in the advising dataset for easier merge - making it match with what I'm expecting
+advising <- advising %>% 
+  rename (PID = "Alternate")
+
+#Merging Advising file with Study IDs
+advising_studyIDs <- left_join(advising, studyIDs, by = "PID")
+
+#Rename "reported duration" variable and "no show" variable
+advising_studyIDs <- advising_studyIDs %>% 
+  rename(reported_duration = `Reported duration`,
+         no_show = `Is no show`)
+```
+
+## Deidentify Data 
+```{r}
+
+#Remove all identifying variables and unnecessary variables
+drop <- c("Student email", "PID", "net_id", "first", "last", "COHORT", "Student", "Careunit", "Organizer external", "Staff name", "Staff email", "Student ID", "Student name", "Appointment created by", "Appointment comments", "Appointment cancelled by", "Cancellation comment",  "Assigned advisors")
+
+advising_studyIDs <- advising_studyIDs  %>% 
+  select(-one_of(drop))
+
+#Move the StudyID variable to the front of the dataset
+
+advising_studyIDs <- advising_studyIDs %>% 
+  select(study_id, everything())
+```
+
+## Remove people who are not part of my study
+```{r}
+  #delete if they don't have a study ID
+
+advising_dissertation_sample <- advising_studyIDs %>% 
+  filter(study_id != "") 
+  #That step removes 18,757 observations from students who are not part of my study. New dataset has 3,009 observations of advising
+
+```
+
+
+## Prepare to remove extra people from the data - check frequencies for no shows and cancellations
+```{r}
+  #delete observations that have a cancelled appointment because they should not be in the data
+
+#Check variable frequencies: 
+  #How many observations are "no shows"
+      questionr::freq(advising_dissertation_sample$no_show)
+          #128 no shows
+
+  #How many observations had cancelled an appt?  
+      questionr::freq(advising_dissertation_sample$reported_duration)
+          #473 Cancelled
+      
+table_cancels_noshows <-table(advising_dissertation_sample$no_show, advising_dissertation_sample$reported_duration)
+table_cancels_noshows
+  #this table shows me that there are NO people who (1) cancelled and (2) are marked as Yes for no-shows.
+  #thus, the 128 no-shows represent different people than the
+  # 473 cancellations (one of whom was marked Both Cancelled and No Show)
+
+  #therefore, the total # of observations I expect to eliminate from the data is 601
+```
+
+# Remove people who cancelled their advising appointments or who did not show up (no show)
+
+```{r}
+#First, create a new variable "drop from data"
+  #that should have a 1 if the reported duration says it was cancelled
+  #should also have a 1 if the appointment was a no show
+  # 1 indicates we should NOT keep it in the data
+
+advising_dissertation_sample <- advising_dissertation_sample %>% 
+  mutate(
+    drop_from_data = case_when(
+      reported_duration == "Cancelled" | no_show == "Yes" ~ 1))
+
+#Check frequencies of the newly created variable
+questionr::freq(advising_dissertation_sample$drop_from_data)
+  #this yields that there are 601 rows that should be dropped from the data, and 
+  # 2408 rows that should be kept
+
+#Next, remove the people who have a value of NA for Drop from Data (the variable I just created)
+
+advising_dissertation_sample <- advising_dissertation_sample %>% 
+  filter(is.na(drop_from_data))
+  #that operation removed 601 rows - as expected. Great!
+  
+#Check to make sure the above command worked as I thought it should
+questionr::freq(advising_dissertation_sample$drop_from_data)
+    #Yep, that has 2408 people who all had a value of NA for "drop_from_data"
+
+#Check other variable frequencies: Are there NO no-shows anymore?
+questionr::freq(advising_dissertation_sample$no_show)
+    #Yep, the only values for no_show are now blank or "no" - meaning that all the "yes" no shows are gone
+questionr::freq(advising_dissertation_sample$reported_duration)
+    #Yep, "cancelled" is no longer a reported duration
+
+#I don't need the drop_from_data variable anymore, so drop that variable
+
+advising_dissertation_sample <- advising_dissertation_sample %>% 
+  select(-drop_from_data)
+
+#more info on "case when" in a mutate pipe here
+# https://stackoverflow.com/questions/38649533/case-when-in-mutate-pipe
+
+#more info on filtering
+# https://sebastiansauer.github.io/dplyr_filter/
+```
+
+## Create a unique identifier for the data : date conversion
+
+```{r}
+#Check out the current data structure
+head(advising_dissertation_sample)
+
+# Rename the date variable 
+  #Using the start date as the date of the appointment
+
+advising_dissertation_sample <- advising_dissertation_sample %>% 
+  rename (date = "Begin date time")
+
+#Convert the date variable to POSIXct format (underlying format for R)
+
+# advising_dissertation_sample %>%
+#   ymd_hms(date)
+# 
+str(advising_dissertation_sample$date)
+
+#Create Year, Month, and Date variables
+advising_dissertation_sample <- 
+  advising_dissertation_sample %>% 
+  mutate(year = year(date),
+         month = month(date),
+         day = day(date))
+
+#check out the frequencies of the new year, month, date variables to make sure they are logical
+  #checking frequencies for Year
+questionr::freq(advising_dissertation_sample$year)
+
+    #checking frequencies for Month
+questionr::freq(advising_dissertation_sample$month)
+
+  #checking frequencies for Day
+questionr::freq(advising_dissertation_sample$day)
+```
+
+# Create Semester Date Finder Function
+  This function will set up the date range of months/dates to include
+  The arguments that it takes are as follows:
+
+(1) startMonth = the first month to be included in the date range for that semester
+
+(2) endMonth = the last month to be included in the date range for that semester
+
+(3) startMonthDaysToExclude = the first days to be EXCLUDED in the date range for that semester
+
+(4) endMonthDaysToExclude = the last days to be EXCLUDED in the date range for that semester
+
+(5) yearForRange = the year that the date range should be from (note that if a semester spans two years,
+you will need to call the semesterDateFinder function twice - once for each year. This argument takes 
+only one year, rather than a year range.)
+
+The way this function works is as follows:
+
+  (1) the first thing it does is to create a dataframe (dayMonthDF) that includes all possible values
+      of days and months, with days ranging from 1 to 31 and months ranging from 1 to 12
+  (2) Next, it makes a big list of all of those possible date/month combinations
+  (3) Next, it specifies a range for the months
+  (4) Next, it specifies the start of which DAYS within that month-range should be EXCLUDED (the ! indicates
+      NOT)
+  (5) Next, it specifies the end of which DAYS within that month-range should be EXCLUDED
+  (6) Finally, it returns a single column that combines dayMonth with year
+
+```{r}
+#Here, I create the semester date finder function as a precursor step to creating the semester variable
+
+semesterDateFinder = function(
+  startMonth, endMonth, 
+  startMonthDaysToExclude, endMonthDaysToExclude, 
+  yearForRange
+  ){
+  dayMonthDF = expand.grid(1:31, 1:12)
+  names(dayMonthDF) = c('day','month')
+  dayMonthDF$dayMonth = apply(dayMonthDF[,c('day','month')], 1, function(x){paste(x[1],x[2], sep='_')})
+  dayMonthDF = dayMonthDF[dayMonthDF$month>=startMonth & dayMonthDF$month<=endMonth,]
+  dayMonthDF = dayMonthDF[!(dayMonthDF$month==startMonth & dayMonthDF$day %in% startMonthDaysToExclude),]
+  dayMonthDF = dayMonthDF[!(dayMonthDF$month==endMonth & dayMonthDF$day %in% endMonthDaysToExclude),]
+  return(paste(dayMonthDF$dayMonth, yearForRange, sep='_')) }
+
+## Here I create the intermediate variables - one for each semester
+  #For each semester in the data, call the semesterDateFinder function and 
+
+#Summer 2016: Monday 5/16 to Tuesday 8/30
+summer2016 = semesterDateFinder(5, 8, 1:15, 31, 2016)
+
+#Fall 2016: Wednesday 8/31 to Sunday 1/8 
+  ### Spans multiple years, so I call the semesterDateFunction twice
+fall2016 = c(
+  semesterDateFinder(8, 12, 1:30, 32, 2016), # this gets 8/31 to 12/31 dates
+  semesterDateFinder(1, 1, 0, 9:31, 2017) # this gets 1/1 to 1/8 dates
+  )
+
+#Spring 2017: Monday 1/9 to Sunday 5/14
+spring2017 = semesterDateFinder(1, 5, 1:8, 15:31, 2017)
+
+#Summer 2017: Monday 5/15 to Tuesday 8/29
+summer2017 = semesterDateFinder(5, 8, 1:14, 30:31, 2017)
+
+#Fall 2017: Wednesday 8/30 to Sunday 1/7
+fall2017 = c(
+  semesterDateFinder(8, 12, 1:29, 32, 2017),       # this gets 8/31 to 12/31 dates
+  semesterDateFinder(1, 1, 0, 8:31, 2018)          # this gets 1/1 to 1/8 dates
+  )
+
+#Spring 2018: Monday 1/8 to Wednesday 3/21
+    ##### Changed 3.10.2019 - First survey was launched 3/22, so making sure that it takes place before then.
+spring2018 = semesterDateFinder(1, 3, 1:7, 22:31, 2018)
+```
+
+# Create the semester variable
+Here, I use the previously created vectors for each separate semester (e.g., fall2016) to populate the semester variable. After populating the semester variables, I delete the extra data - data that came from after Spring 2018 (because the raw data I received spanned until December 2018). I do that by removing the "na"s at the end of the semester variable calculation. That step would not be necessary if all the dates that were included in your dataset were specified as belonging to a particular semester. 
+I'm adding the semester variable to the advising_dissertation_sample dataframe, so that my pre-existing data now has a new variable appended to it that includes the semester info.
+
+#Method Comments
+
+The advising data were labeled with the month, date, and year of the appointment. After deidentifying the data and merging in the study ID variables, I separated these into separate variables for month, date and year. Next, I used information from the university's academic calendar to delineate when the different semesters started. 
+ 
+The semester start dates were as follows: 
+ (no data) Fall 2015, Wednesday 9/2
+ (no data) Spring 2016, Monday 1/11
+ Summer 2016 I, Monday 5/16
+ Summer 2016 II, Tuesday 7/5
+ Fall 2016, Wednesday 8/31
+ Spring 2017, Monday 1/9
+ Summer 2017 I, Monday 5/15
+ Summer 2017 II, Wednesday 7/5
+ Fall 2017, Wednesday 8/30
+ Spring 2018, Monday 1/8
+ 
+To create a unique identifier for the data, I combined the semester with the StudyID so that each student has a unique variable for each semester.
+
+```{r}
+# now....lets create the semester variable
+advising_dissertation_sample$dmy = with(advising_dissertation_sample, paste(day, month, year, sep='_'))
+advising_dissertation_sample$semester = NA  #First populate with NAs for everyone, then update the variable according to the syntax below
+
+advising_dissertation_sample$semester[advising_dissertation_sample$dmy %in% summer2016] = 'Summer 2016'
+advising_dissertation_sample$semester[advising_dissertation_sample$dmy %in% fall2016] = 'Fall 2016'
+advising_dissertation_sample$semester[advising_dissertation_sample$dmy %in% spring2017] = 'Spring 2017'
+
+advising_dissertation_sample$semester[advising_dissertation_sample$dmy %in% summer2017] = 'Summer 2017'
+advising_dissertation_sample$semester[advising_dissertation_sample$dmy %in% fall2017] = 'Fall 2017'
+advising_dissertation_sample$semester[advising_dissertation_sample$dmy %in% spring2018] = 'Spring 2018'
+
+# remove students who met with advisor after spring 2018
+  #they have no value for the "semester" variable
+advising_dissertation_sample = advising_dissertation_sample[!is.na(advising_dissertation_sample$semester),]
+```
+
+# Create student-semester variable and Count the number of times students meet with an advisor within a semester
+
+```{r}  
+advising_dissertation_sample$StudentSemester = with(advising_dissertation_sample, paste(study_id, semester))
+
+#How many people met with their advisors more than once?
+
+table(advising_dissertation_sample$StudentSemester)[table(advising_dissertation_sample$StudentSemester)>1]
+  
+plot(density(table(advising_dissertation_sample$StudentSemester)))
+      #students are meeting their advisors more than once per semester... 
+      #so it is probably useful to use "count by semester" as a variable
+```
+
+# Create an Advising Count Variable - By Semester
+  Here, I create an advising count variable: how many times within a semester did each student meet an advisor?
+```{r}
+advising_dissertation_sample <- advising_dissertation_sample %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester - if a student met advisor 7 times, they would have 7 of those- this counts that
+  mutate(advisingCount = n())
+
+questionr::freq(advising_dissertation_sample$advisingCount)
+```
+
+
+#########################################################################################################
+#Make a shortened dataset that only includes the variables that I need
+  Study ID
+  Semester
+  Advising Count
+
+```{r}
+short <- advising_dissertation_sample %>% 
+  select(study_id, semester, advisingCount)
+```
+
+#########################################################################################################
+
+# Transform data from long to wide
+
+```{r}
+#Keep only unique values of StudentSemester, drop all others
+  #that's a unique identifier
+
+unique <- short %>% 
+             dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for each semester advising count
+
+advising_final <- spread(unique %>% 
+                    group_by(study_id) %>% 
+                      select(study_id, semester, advisingCount), semester, advisingCount) 
+
+#Rename the variables so that they make sense in the merged dataset
+advising_final <- advising_final %>% 
+                    rename(adv_F16 = `Fall 2016`,	
+                           adv_F17 = `Fall 2017`,	
+                           adv_S17 = `Spring 2017`,
+                           adv_S18 = `Spring 2018`,
+                           adv_U16 = `Summer 2016`,
+                           adv_U17 = `Summer 2017`)
+
+#Helpful info on spread here
+# https://stackoverflow.com/questions/29775461/how-can-i-spread-repeated-measures-of-multiple-variables-into-wide-format
+
+```
+
+## Export Data
+```{r}
+write_csv(advising_final, "advising_processed.csv")
+```
+

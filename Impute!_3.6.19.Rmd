@@ -1,0 +1,934 @@
+---
+title: "Impute!"
+author: "Emily Bovee"
+date: "3/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## Reading in Relevant Data
+  The data that this file takes is the survey data only. The reason for this is that I only want to pick in my dataset the variables that I care most about imputing and the variables that are most related to those variables. 
+  Additionally, when I tried the imputation with the behavioral data in there as well, I received an error message that indicated that the matrix is singular or not positive definite. That indicates that the data are too collinear and I took action accordingly.
+```{r}
+library(readxl)
+library(tidyverse)
+library(survey)
+library(tidylog)
+library(Amelia)
+library(parallel)
+library(haven)
+library(labelled)
+
+getwd()
+
+#First, load new dataset from SPSS
+
+survey <- read_spss("Emily_Dissertation_3.1.19_EndofDay.sav")
+
+
+#Rename the study ID variable in the survey so it's consistent with the other naming conventions
+survey <- survey %>% 
+          rename(study_id = StudyID)
+
+#Remove study ID variable label
+survey$study_id <- remove_var_label(survey$study_id)  
+
+#Keep only the variables I want
+
+#Make a list of variables to keep
+  ## Eventually, I'll be doing this with the imputed data - but I do still need to keep the other variables for the imputation
+
+keep <- c("study_id", #unique identifier
+          "V1Completion", #survey completion
+          "V2Completion",
+          "V3Completion",
+          "V4Completion",
+          "Total_Surveys_Completed", #variable calculated to count surveys comp.
+          "RACE_ETH", # demographics
+          "FIRSTGEN",
+           "FEMALE",
+          "SouthcomplexBinary_2015", #did student live in South complex in 2015?
+          "Max_ACT_Composite", #Prior Achievement
+          "SS18_Persistence", #Outcome
+          "V1ESE1", "V1ESE2", "V1ESE3", "V1ESE4", "V1ESE5", #motivation
+          "V2ESE1", "V2ESE2", "V2ESE3", "V2ESE4", "V2ESE5",
+          "V3ESE1", "V3ESE2", "V3ESE3", "V3ESE4", "V3ESE5",
+          "V4ESE1", "V4ESE2", "V4ESE3", "V4ESE4", "V4ESE5",
+          "V1Int1", "V1Int2", "V1Int3", "V1Int4", "V1Int5",
+          "V2Int1", "V2Int2", "V2Int3", "V2Int4", "V2Int5",
+          "V3Int1", "V3Int2", "V3Int3", "V3Int4", "V3Int5",
+          "V4Int1", "V4Int2", "V4Int3", "V4Int4", "V4Int5",
+          "V1Att2", "V1Att3", "V1Att4", "V1Att5",
+          "V2Att2", "V2Att3", "V2Att4", "V2Att5",
+          "V3Att2", "V3Att3", "V3Att4", "V3Att5",
+          "V4Att2", "V4Att3", "V4Att4", "V4Att5",
+          "V1Util1", "V1Util2", "V1Util5",
+          "V2Util1","V2Util2", "V2Util5",
+          "V3Util1", "V3Util2", "V3Util5",
+          "V4Util1", "V4Util2", "V4Util5")
+          
+for_imputation <- survey  %>% 
+  select(one_of(keep))
+
+
+```
+
+## Checking for correlations
+Here, I check for correlations in the survey variables. What I'm looking for here is any correlations that are above a .9, because those predictors would be too collinear and thus should be excluded from the data.
+```{r}
+####### did this in SPSS - 3.4.19
+#Syntax file name: correlations.spv
+```
+
+## Amelia imputation
+
+Notes from Hope meeting 3.4.19
+Summary:
+	1) include motivation as lag variables
+	2) Make sure to convert to long format first
+	3) Pick a few variables and randomly select 500 subjects to test whether the imputation code works
+	4) Make sure to test how robust the imputation was by looking at plots, like in the end of the slide deck here: https://opr.princeton.edu/workshops/Downloads/2018Jan_AmeliaPratt.pdf 
+	5) Good idea to use Amelia
+	6) Specify the following arguments:
+		ts = time variable
+		categorical variables
+		continuous variables
+		cs = study ID
+		lags = all motivation variables in a concatenated list c(Att1, Att2, Int1, Int2, etc.)
+	7) Use polytime to fit a polynomial regression - if and only if the original imputation doesn’t work well.
+
+# Convert data to Long format for Amelia
+```{r}
+# Convert data to Long format for Amelia
+#----------------------
+#First, make a dataset with only V1 variables
+#----------------------
+V1_only <- for_imputation %>% 
+  select(c("study_id",
+        "RACE_ETH", #demographics
+        "FIRSTGEN",
+        "FEMALE",
+        "Max_ACT_Composite", #Prior Achievement
+         "V1ESE1", "V1ESE2", "V1ESE3", "V1ESE4", "V1ESE5",
+        "V1Int1", "V1Int2", "V1Int3", "V1Int4", "V1Int5",
+        "V1Att2", "V1Att3", "V1Att4", "V1Att5",
+        "V1Util1", "V1Util2", "V1Util5"))
+ 
+#Give them a label for time = 1
+
+V1_only <- V1_only %>% 
+  mutate(time = "1")
+
+#Change variable labels to be consistent for merging
+V1_only <- V1_only %>% 
+  rename(ESE1	=	V1ESE1,
+	ESE2	=	V1ESE2,
+	ESE3	=	V1ESE3,
+	ESE4	=	V1ESE4,
+	ESE5	=	V1ESE5,
+	Int1	=	V1Int1,
+	Int2	=	V1Int2,
+	Int3	=	V1Int3,
+	Int4	=	V1Int4,
+	Int5	=	V1Int5,
+	Att2	=	V1Att2,
+	Att3	=	V1Att3,
+	Att4	=	V1Att4,
+	Att5	=	V1Att5,
+	Util1	=	V1Util1,
+	Util2	=	V1Util2,
+	Util5	=	V1Util5)
+
+#----------------------
+#Second, make a dataset with only V2 variables
+#----------------------
+V2_only <- for_imputation %>% 
+  select(c(
+    "study_id",
+    "RACE_ETH", #demographics
+    "FIRSTGEN",
+    "FEMALE",
+     "Max_ACT_Composite", #Prior Achievement
+    "V2ESE1", "V2ESE2", "V2ESE3", "V2ESE4", "V2ESE5",
+    "V2Int1", "V2Int2", "V2Int3", "V2Int4", "V2Int5",
+    "V2Att2", "V2Att3", "V2Att4", "V2Att5",
+    "V2Util1","V2Util2", "V2Util5"
+  ))
+  #Give them a label for time = 2
+V2_only <- V2_only %>% 
+  mutate(time = "2")
+
+#Change variable labels to be consistent for merging
+V2_only <- V2_only %>% 
+  rename(ESE1	=	V2ESE1,
+	ESE2	=	V2ESE2,
+	ESE3	=	V2ESE3,
+	ESE4	=	V2ESE4,
+	ESE5	=	V2ESE5,
+	Int1	=	V2Int1,
+	Int2	=	V2Int2,
+	Int3	=	V2Int3,
+	Int4	=	V2Int4,
+	Int5	=	V2Int5,
+	Att2	=	V2Att2,
+	Att3	=	V2Att3,
+	Att4	=	V2Att4,
+	Att5	=	V2Att5,
+	Util1	=	V2Util1,
+	Util2	=	V2Util2,
+	Util5	=	V2Util5)
+
+#----------------------
+#Third, make a dataset with only V3 variables
+#----------------------
+V3_only <- for_imputation %>% 
+  select(c(
+    "study_id",
+    "RACE_ETH", #demographics
+    "FIRSTGEN",
+    "FEMALE",
+     "Max_ACT_Composite", #Prior Achievement
+    "V3ESE1", "V3ESE2", "V3ESE3", "V3ESE4", "V3ESE5",
+    "V3Int1", "V3Int2", "V3Int3", "V3Int4", "V3Int5",
+     "V3Att2", "V3Att3", "V3Att4", "V3Att5",
+    "V3Util1", "V3Util2", "V3Util5"
+  ))
+  
+    #Give them a label for time = 3
+V3_only <- V3_only %>% 
+  mutate(time = "3")
+  
+#Change variable labels to be consistent for merging
+V3_only <- V3_only %>% 
+  rename(ESE1	=	V3ESE1,
+	ESE2	=	V3ESE2,
+	ESE3	=	V3ESE3,
+	ESE4	=	V3ESE4,
+	ESE5	=	V3ESE5,
+	Int1	=	V3Int1,
+	Int2	=	V3Int2,
+	Int3	=	V3Int3,
+	Int4	=	V3Int4,
+	Int5	=	V3Int5,
+	Att2	=	V3Att2,
+	Att3	=	V3Att3,
+	Att4	=	V3Att4,
+	Att5	=	V3Att5,
+	Util1	=	V3Util1,
+	Util2	=	V3Util2,
+	Util5	=	V3Util5)
+
+#----------------------
+#Fourth, make a dataset with only V4 variables
+#----------------------
+V4_only <- for_imputation %>% 
+  select(c(
+    "study_id",
+    "RACE_ETH", #demographics
+    "FIRSTGEN",
+    "FEMALE",
+    "Max_ACT_Composite", #Prior Achievement
+          "V4ESE1", "V4ESE2", "V4ESE3", "V4ESE4", "V4ESE5",
+          "V4Int1", "V4Int2", "V4Int3", "V4Int4", "V4Int5",
+          "V4Att2", "V4Att3", "V4Att4", "V4Att5",
+          "V4Util1", "V4Util2", "V4Util5"
+  ))
+          
+  #Give them a label for time = 4
+V4_only <- V4_only %>% 
+  mutate(time = "4")
+
+#Change variable labels to be consistent for merging
+V4_only <- V4_only %>% 
+  rename(ESE1	=	V4ESE1,
+	ESE2	=	V4ESE2,
+	ESE3	=	V4ESE3,
+	ESE4	=	V4ESE4,
+	ESE5	=	V4ESE5,
+	Int1	=	V4Int1,
+	Int2	=	V4Int2,
+	Int3	=	V4Int3,
+	Int4	=	V4Int4,
+	Int5	=	V4Int5,
+	Att2	=	V4Att2,
+	Att3	=	V4Att3,
+	Att4	=	V4Att4,
+	Att5	=	V4Att5,
+	Util1	=	V4Util1,
+	Util2	=	V4Util2,
+	Util5	=	V4Util5)
+
+#----------------------
+#Rbind the four datasets together
+#----------------------
+for_imputation_long <- rbind(V1_only, V2_only, V3_only, V4_only)
+
+#More info on wide to long here:
+# https://rpubs.com/mm-c/gather-and-spread
+```
+
+# Impute using Amelia package
+
+Next steps
+  Long format
+   Specify the variables that are categorical
+  Specify ts = time variables
+   cs = Study ID ("cross sectional" because of long data format) - tells who it is for each timepoint
+   idvars (argument) is for variables that don't want to impute - but keep in dataset - i.e., Gender, stuff I want in the RF but don't want to be in the imputation
+      decide what I think should factor in
+   m (after 5, not getting much out of the data )
+  lags = indicate the motivation variables (not lagging time 1, bc. no previous time)
+more about lagging
+  https://gking.harvard.edu/files/gking/files/amelia_jss.pdf 
+
+lag = only prior timepoint affects the next timepoint (e.g., Time 1 --> Time 2, but Time 1 --> Time 3.)
+
+polytime = applies the same regression formula to each but does squared, cubed, etc. factors in the regression.
+   so - could try values of 1-3 in here if the imputations don't work well. 
+  
+-------------------------------------
+Notes 3.6.19 on the imputation
+  1) is it possible to have a variable in Amelia that informs the imputation but is not imputed itself?
+  2) currently, I include them in the imputation but then I bring back the original variables in later after the imputation is done, so that I don't move forward with imputed variables in the  
+
+```{r}
+
+## Imputing with Amelia
+
+  ### Impute
+
+#Transforming the "time" variable into numeric
+
+for_imputation_long$time <- as.numeric(for_imputation_long$time)
+      
+#Set a seed for replicability
+
+set.seed(2020)
+imputed_3.6.19 <- amelia(for_imputation_long, 
+       m = 5, 
+       ts = "time",
+       cs = "study_id", 
+       ords = c("ESE1", "ESE2", "ESE3", "ESE4", "ESE5", 
+              "Int1", "Int2", "Int3", "Int4", "Int5",
+              "Att2", "Att3", "Att4", "Att5",
+              "Util1", "Util2", "Util5"),
+       lags = c("ESE1", "ESE2", "ESE3", "ESE4", "ESE5", 
+              "Int1", "Int2", "Int3", "Int4", "Int5",
+              "Att2", "Att3", "Att4", "Att5",
+              "Util1", "Util2", "Util5"),
+      parallel = "multicore"
+       )
+
+#Step by step tutorial for using Amelia
+# https://opr.princeton.edu/workshops/Downloads/2018Jan_AmeliaPratt.pdf  
+
+
+#More info about using Amelia
+#http://fastml.com/impute-missing-values-with-amelia/
+
+#Parallelization and Amelia
+#https://www.rdocumentation.org/packages/Amelia/versions/1.7.5/topics/amelia 
+
+# Troubleshooting Error codes I received in Amelia
+# https://lists.gking.harvard.edu/pipermail/amelia/2007-September/000778.html
+
+```  
+# Check distributions of imputed data to see whether it is in good shape
+
+```{r}
+##Checking imputations
+#distribution should be similar between original data and imputed data
+  #Imputed is red
+  #Raw is black
+
+#Engineering Self-Efficacy Plots
+plot(imputed_3.6.19, which.vars=6:10)
+
+#Interest Value Plots
+plot(imputed_3.6.19, which.vars=11:15)
+
+#Attainment Value Plots
+plot(imputed_3.6.19, which.vars=16:19)
+
+#Utility Value Plots
+
+plot(imputed_3.6.19, which.vars=20:22)
+
+
+#plot.amelia
+  #https://www.rdocumentation.org/packages/Amelia/versions/1.7.5/topics/plot.amelia
+
+# https://opr.princeton.edu/workshops/Downloads/2018Jan_AmeliaPratt.pdf
+```
+
+#Extract the Imputed Datasets
+
+```{r}
+#Imputed Dataset 1
+imp1 <- imputed_3.6.19$imputations[[1]]
+
+#Imputed Dataset 2
+imp2 <- imputed_3.6.19$imputations[[2]]
+
+#Imputed Dataset 3
+imp3 <- imputed_3.6.19$imputations[[3]]
+
+#Imputed Dataset 4
+imp4 <- imputed_3.6.19$imputations[[4]]
+
+#Imputed Dataset 5
+imp5 <- imputed_3.6.19$imputations[[5]]
+
+#More about how to extract amelia output for later analysis
+# https://stackoverflow.com/questions/28092625/using-amelia-multiple-imputation-output-for-analysis-using-functions-other-tha
+```
+
+# Long to Wide again
+```{r}
+
+# After Imputation, write the file so that it will easily merge with the other data - i.e. wide format again
+#Convert from wide to long
+library(data.table)
+imp1_wide <- dcast(setDT(imp1), study_id~time, value.var=c("ESE1",
+            "ESE2" ,
+            "ESE3" ,
+            "ESE4" ,
+            "ESE5"	,
+            "Int1"	,
+            "Int2"	,
+            "Int3"	,
+            "Int4"	,
+            "Int5"	,
+            "Att2"	,
+            "Att3"	,
+            "Att4"	,
+            "Att5"	,
+            "Util1",
+         	  "Util2",
+            "Util5"))
+
+#Imputation 2
+imp2_wide <- dcast(setDT(imp2), study_id~time, value.var=c("ESE1",
+            "ESE2" ,
+            "ESE3" ,
+            "ESE4" ,
+            "ESE5"	,
+            "Int1"	,
+            "Int2"	,
+            "Int3"	,
+            "Int4"	,
+            "Int5"	,
+            "Att2"	,
+            "Att3"	,
+            "Att4"	,
+            "Att5"	,
+            "Util1",
+         	  "Util2",
+            "Util5"))
+
+#Imputation 3
+
+imp3_wide <- dcast(setDT(imp3), study_id~time, value.var=c("ESE1",
+            "ESE2" ,
+            "ESE3" ,
+            "ESE4" ,
+            "ESE5"	,
+            "Int1"	,
+            "Int2"	,
+            "Int3"	,
+            "Int4"	,
+            "Int5"	,
+            "Att2"	,
+            "Att3"	,
+            "Att4"	,
+            "Att5"	,
+            "Util1",
+         	  "Util2",
+            "Util5"))
+
+#Imputation 4
+
+imp4_wide <- dcast(setDT(imp4), study_id~time, value.var=c("ESE1",
+            "ESE2" ,
+            "ESE3" ,
+            "ESE4" ,
+            "ESE5"	,
+            "Int1"	,
+            "Int2"	,
+            "Int3"	,
+            "Int4"	,
+            "Int5"	,
+            "Att2"	,
+            "Att3"	,
+            "Att4"	,
+            "Att5"	,
+            "Util1",
+         	  "Util2",
+            "Util5"))
+
+#Imputation 5
+imp5_wide <- dcast(setDT(imp5), study_id~time, value.var=c("ESE1",
+            "ESE2" ,
+            "ESE3" ,
+            "ESE4" ,
+            "ESE5"	,
+            "Int1"	,
+            "Int2"	,
+            "Int3"	,
+            "Int4"	,
+            "Int5"	,
+            "Att2"	,
+            "Att3"	,
+            "Att4"	,
+            "Att5"	,
+            "Util1",
+         	  "Util2",
+            "Util5"))
+#More about wide to long in R
+
+#https://stackoverflow.com/questions/10589693/convert-data-from-long-format-to-wide-format-with-multiple-measure-columns
+```
+
+# Clean up the variable names 
+```{r}
+#Rename the variables so that it's clear which variables came from which time points
+
+colnames(imp1_wide)
+
+imp1_wide <- imp1_wide %>% 
+  rename(V1ESE1	=	ESE1_1	,
+V1ESE2	=	ESE2_1	,
+V1ESE3	=	ESE3_1	,
+V1ESE4	=	ESE4_1	,
+V1ESE5	=	ESE5_1	,
+V1Int1	=	Int1_1	,
+V1Int2	=	Int2_1	,
+V1Int3	=	Int3_1	,
+V1Int4	=	Int4_1	,
+V1Int5	=	Int5_1	,
+V1Att2	=	Att2_1	,
+V1Att3	=	Att3_1	,
+V1Att4	=	Att4_1	,
+V1Att5	=	Att5_1	,
+V1Util1	=	Util1_1	,
+V1Util2	=	Util2_1	,
+V1Util5	=	Util5_1	,
+V2ESE1	=	ESE1_2	,
+V2ESE2	=	ESE2_2	,
+V2ESE3	=	ESE3_2	,
+V2ESE4	=	ESE4_2	,
+V2ESE5	=	ESE5_2	,
+V2Int1	=	Int1_2	,
+V2Int2	=	Int2_2	,
+V2Int3	=	Int3_2	,
+V2Int4	=	Int4_2	,
+V2Int5	=	Int5_2	,
+V2Att2	=	Att2_2	,
+V2Att3	=	Att3_2	,
+V2Att4	=	Att4_2	,
+V2Att5	=	Att5_2	,
+V2Util1	=	Util1_2	,
+V2Util2	=	Util2_2	,
+V2Util5	=	Util5_2	,
+V3ESE1	=	ESE1_3	,
+V3ESE2	=	ESE2_3	,
+V3ESE3	=	ESE3_3	,
+V3ESE4	=	ESE4_3	,
+V3ESE5	=	ESE5_3	,
+V3Int1	=	Int1_3	,
+V3Int2	=	Int2_3	,
+V3Int3	=	Int3_3	,
+V3Int4	=	Int4_3	,
+V3Int5	=	Int5_3	,
+V3Att2	=	Att2_3	,
+V3Att3	=	Att3_3	,
+V3Att4	=	Att4_3	,
+V3Att5	=	Att5_3	,
+V3Util1	=	Util1_3	,
+V3Util2	=	Util2_3	,
+V3Util5	=	Util5_3	,
+V4ESE1	=	ESE1_4	,
+V4ESE2	=	ESE2_4	,
+V4ESE3	=	ESE3_4	,
+V4ESE4	=	ESE4_4	,
+V4ESE5	=	ESE5_4	,
+V4Int1	=	Int1_4	,
+V4Int2	=	Int2_4	,
+V4Int3	=	Int3_4	,
+V4Int4	=	Int4_4	,
+V4Int5	=	Int5_4	,
+V4Att2	=	Att2_4	,
+V4Att3	=	Att3_4	,
+V4Att4	=	Att4_4	,
+V4Att5	=	Att5_4	,
+V4Util1	=	Util1_4	,
+V4Util2	=	Util2_4	,
+V4Util5	=	Util5_4	)
+
+#Imputation 2
+imp2_wide <- imp2_wide %>% 
+  rename(V1ESE1	=	ESE1_1	,
+V1ESE2	=	ESE2_1	,
+V1ESE3	=	ESE3_1	,
+V1ESE4	=	ESE4_1	,
+V1ESE5	=	ESE5_1	,
+V1Int1	=	Int1_1	,
+V1Int2	=	Int2_1	,
+V1Int3	=	Int3_1	,
+V1Int4	=	Int4_1	,
+V1Int5	=	Int5_1	,
+V1Att2	=	Att2_1	,
+V1Att3	=	Att3_1	,
+V1Att4	=	Att4_1	,
+V1Att5	=	Att5_1	,
+V1Util1	=	Util1_1	,
+V1Util2	=	Util2_1	,
+V1Util5	=	Util5_1	,
+V2ESE1	=	ESE1_2	,
+V2ESE2	=	ESE2_2	,
+V2ESE3	=	ESE3_2	,
+V2ESE4	=	ESE4_2	,
+V2ESE5	=	ESE5_2	,
+V2Int1	=	Int1_2	,
+V2Int2	=	Int2_2	,
+V2Int3	=	Int3_2	,
+V2Int4	=	Int4_2	,
+V2Int5	=	Int5_2	,
+V2Att2	=	Att2_2	,
+V2Att3	=	Att3_2	,
+V2Att4	=	Att4_2	,
+V2Att5	=	Att5_2	,
+V2Util1	=	Util1_2	,
+V2Util2	=	Util2_2	,
+V2Util5	=	Util5_2	,
+V3ESE1	=	ESE1_3	,
+V3ESE2	=	ESE2_3	,
+V3ESE3	=	ESE3_3	,
+V3ESE4	=	ESE4_3	,
+V3ESE5	=	ESE5_3	,
+V3Int1	=	Int1_3	,
+V3Int2	=	Int2_3	,
+V3Int3	=	Int3_3	,
+V3Int4	=	Int4_3	,
+V3Int5	=	Int5_3	,
+V3Att2	=	Att2_3	,
+V3Att3	=	Att3_3	,
+V3Att4	=	Att4_3	,
+V3Att5	=	Att5_3	,
+V3Util1	=	Util1_3	,
+V3Util2	=	Util2_3	,
+V3Util5	=	Util5_3	,
+V4ESE1	=	ESE1_4	,
+V4ESE2	=	ESE2_4	,
+V4ESE3	=	ESE3_4	,
+V4ESE4	=	ESE4_4	,
+V4ESE5	=	ESE5_4	,
+V4Int1	=	Int1_4	,
+V4Int2	=	Int2_4	,
+V4Int3	=	Int3_4	,
+V4Int4	=	Int4_4	,
+V4Int5	=	Int5_4	,
+V4Att2	=	Att2_4	,
+V4Att3	=	Att3_4	,
+V4Att4	=	Att4_4	,
+V4Att5	=	Att5_4	,
+V4Util1	=	Util1_4	,
+V4Util2	=	Util2_4	,
+V4Util5	=	Util5_4	)
+
+#Imputation 3
+imp3_wide <- imp3_wide %>% 
+  rename(V1ESE1	=	ESE1_1	,
+V1ESE2	=	ESE2_1	,
+V1ESE3	=	ESE3_1	,
+V1ESE4	=	ESE4_1	,
+V1ESE5	=	ESE5_1	,
+V1Int1	=	Int1_1	,
+V1Int2	=	Int2_1	,
+V1Int3	=	Int3_1	,
+V1Int4	=	Int4_1	,
+V1Int5	=	Int5_1	,
+V1Att2	=	Att2_1	,
+V1Att3	=	Att3_1	,
+V1Att4	=	Att4_1	,
+V1Att5	=	Att5_1	,
+V1Util1	=	Util1_1	,
+V1Util2	=	Util2_1	,
+V1Util5	=	Util5_1	,
+V2ESE1	=	ESE1_2	,
+V2ESE2	=	ESE2_2	,
+V2ESE3	=	ESE3_2	,
+V2ESE4	=	ESE4_2	,
+V2ESE5	=	ESE5_2	,
+V2Int1	=	Int1_2	,
+V2Int2	=	Int2_2	,
+V2Int3	=	Int3_2	,
+V2Int4	=	Int4_2	,
+V2Int5	=	Int5_2	,
+V2Att2	=	Att2_2	,
+V2Att3	=	Att3_2	,
+V2Att4	=	Att4_2	,
+V2Att5	=	Att5_2	,
+V2Util1	=	Util1_2	,
+V2Util2	=	Util2_2	,
+V2Util5	=	Util5_2	,
+V3ESE1	=	ESE1_3	,
+V3ESE2	=	ESE2_3	,
+V3ESE3	=	ESE3_3	,
+V3ESE4	=	ESE4_3	,
+V3ESE5	=	ESE5_3	,
+V3Int1	=	Int1_3	,
+V3Int2	=	Int2_3	,
+V3Int3	=	Int3_3	,
+V3Int4	=	Int4_3	,
+V3Int5	=	Int5_3	,
+V3Att2	=	Att2_3	,
+V3Att3	=	Att3_3	,
+V3Att4	=	Att4_3	,
+V3Att5	=	Att5_3	,
+V3Util1	=	Util1_3	,
+V3Util2	=	Util2_3	,
+V3Util5	=	Util5_3	,
+V4ESE1	=	ESE1_4	,
+V4ESE2	=	ESE2_4	,
+V4ESE3	=	ESE3_4	,
+V4ESE4	=	ESE4_4	,
+V4ESE5	=	ESE5_4	,
+V4Int1	=	Int1_4	,
+V4Int2	=	Int2_4	,
+V4Int3	=	Int3_4	,
+V4Int4	=	Int4_4	,
+V4Int5	=	Int5_4	,
+V4Att2	=	Att2_4	,
+V4Att3	=	Att3_4	,
+V4Att4	=	Att4_4	,
+V4Att5	=	Att5_4	,
+V4Util1	=	Util1_4	,
+V4Util2	=	Util2_4	,
+V4Util5	=	Util5_4	)
+
+#Imputation 4
+
+imp4_wide <- imp4_wide %>% 
+  rename(V1ESE1	=	ESE1_1	,
+V1ESE2	=	ESE2_1	,
+V1ESE3	=	ESE3_1	,
+V1ESE4	=	ESE4_1	,
+V1ESE5	=	ESE5_1	,
+V1Int1	=	Int1_1	,
+V1Int2	=	Int2_1	,
+V1Int3	=	Int3_1	,
+V1Int4	=	Int4_1	,
+V1Int5	=	Int5_1	,
+V1Att2	=	Att2_1	,
+V1Att3	=	Att3_1	,
+V1Att4	=	Att4_1	,
+V1Att5	=	Att5_1	,
+V1Util1	=	Util1_1	,
+V1Util2	=	Util2_1	,
+V1Util5	=	Util5_1	,
+V2ESE1	=	ESE1_2	,
+V2ESE2	=	ESE2_2	,
+V2ESE3	=	ESE3_2	,
+V2ESE4	=	ESE4_2	,
+V2ESE5	=	ESE5_2	,
+V2Int1	=	Int1_2	,
+V2Int2	=	Int2_2	,
+V2Int3	=	Int3_2	,
+V2Int4	=	Int4_2	,
+V2Int5	=	Int5_2	,
+V2Att2	=	Att2_2	,
+V2Att3	=	Att3_2	,
+V2Att4	=	Att4_2	,
+V2Att5	=	Att5_2	,
+V2Util1	=	Util1_2	,
+V2Util2	=	Util2_2	,
+V2Util5	=	Util5_2	,
+V3ESE1	=	ESE1_3	,
+V3ESE2	=	ESE2_3	,
+V3ESE3	=	ESE3_3	,
+V3ESE4	=	ESE4_3	,
+V3ESE5	=	ESE5_3	,
+V3Int1	=	Int1_3	,
+V3Int2	=	Int2_3	,
+V3Int3	=	Int3_3	,
+V3Int4	=	Int4_3	,
+V3Int5	=	Int5_3	,
+V3Att2	=	Att2_3	,
+V3Att3	=	Att3_3	,
+V3Att4	=	Att4_3	,
+V3Att5	=	Att5_3	,
+V3Util1	=	Util1_3	,
+V3Util2	=	Util2_3	,
+V3Util5	=	Util5_3	,
+V4ESE1	=	ESE1_4	,
+V4ESE2	=	ESE2_4	,
+V4ESE3	=	ESE3_4	,
+V4ESE4	=	ESE4_4	,
+V4ESE5	=	ESE5_4	,
+V4Int1	=	Int1_4	,
+V4Int2	=	Int2_4	,
+V4Int3	=	Int3_4	,
+V4Int4	=	Int4_4	,
+V4Int5	=	Int5_4	,
+V4Att2	=	Att2_4	,
+V4Att3	=	Att3_4	,
+V4Att4	=	Att4_4	,
+V4Att5	=	Att5_4	,
+V4Util1	=	Util1_4	,
+V4Util2	=	Util2_4	,
+V4Util5	=	Util5_4	)
+
+#Imputation 5
+imp5_wide <- imp5_wide %>% 
+  rename(V1ESE1	=	ESE1_1	,
+V1ESE2	=	ESE2_1	,
+V1ESE3	=	ESE3_1	,
+V1ESE4	=	ESE4_1	,
+V1ESE5	=	ESE5_1	,
+V1Int1	=	Int1_1	,
+V1Int2	=	Int2_1	,
+V1Int3	=	Int3_1	,
+V1Int4	=	Int4_1	,
+V1Int5	=	Int5_1	,
+V1Att2	=	Att2_1	,
+V1Att3	=	Att3_1	,
+V1Att4	=	Att4_1	,
+V1Att5	=	Att5_1	,
+V1Util1	=	Util1_1	,
+V1Util2	=	Util2_1	,
+V1Util5	=	Util5_1	,
+V2ESE1	=	ESE1_2	,
+V2ESE2	=	ESE2_2	,
+V2ESE3	=	ESE3_2	,
+V2ESE4	=	ESE4_2	,
+V2ESE5	=	ESE5_2	,
+V2Int1	=	Int1_2	,
+V2Int2	=	Int2_2	,
+V2Int3	=	Int3_2	,
+V2Int4	=	Int4_2	,
+V2Int5	=	Int5_2	,
+V2Att2	=	Att2_2	,
+V2Att3	=	Att3_2	,
+V2Att4	=	Att4_2	,
+V2Att5	=	Att5_2	,
+V2Util1	=	Util1_2	,
+V2Util2	=	Util2_2	,
+V2Util5	=	Util5_2	,
+V3ESE1	=	ESE1_3	,
+V3ESE2	=	ESE2_3	,
+V3ESE3	=	ESE3_3	,
+V3ESE4	=	ESE4_3	,
+V3ESE5	=	ESE5_3	,
+V3Int1	=	Int1_3	,
+V3Int2	=	Int2_3	,
+V3Int3	=	Int3_3	,
+V3Int4	=	Int4_3	,
+V3Int5	=	Int5_3	,
+V3Att2	=	Att2_3	,
+V3Att3	=	Att3_3	,
+V3Att4	=	Att4_3	,
+V3Att5	=	Att5_3	,
+V3Util1	=	Util1_3	,
+V3Util2	=	Util2_3	,
+V3Util5	=	Util5_3	,
+V4ESE1	=	ESE1_4	,
+V4ESE2	=	ESE2_4	,
+V4ESE3	=	ESE3_4	,
+V4ESE4	=	ESE4_4	,
+V4ESE5	=	ESE5_4	,
+V4Int1	=	Int1_4	,
+V4Int2	=	Int2_4	,
+V4Int3	=	Int3_4	,
+V4Int4	=	Int4_4	,
+V4Int5	=	Int5_4	,
+V4Att2	=	Att2_4	,
+V4Att3	=	Att3_4	,
+V4Att4	=	Att4_4	,
+V4Att5	=	Att5_4	,
+V4Util1	=	Util1_4	,
+V4Util2	=	Util2_4	,
+V4Util5	=	Util5_4	)
+```
+
+#For each of the imputed datasets,merge back the original variables in with it too
+
+```{r}
+
+#Add these other variables from the original survey data ("For imputation")
+#variables to merge once in wide format
+
+  #Including not only variables that were not part of the imputation
+  #but also including variables that WERE part of the imputation, but that I want to use the raw values for now.
+    #those are: 
+      #FirstGen, 
+      #Gender
+      #Race/Ethnicity
+      #MaxACT Composite
+          
+original_survey_variables <- for_imputation %>% 
+select(c("study_id",
+          "RACE_ETH", #3 demographic variables
+         "FIRSTGEN",
+         "FEMALE",
+         "Max_ACT_Composite", #prior achievement
+         "Total_Surveys_Completed", #survey completion variables
+         "V1Completion",
+         "V2Completion",
+         "V3Completion",
+         "V4Completion",
+         "SouthcomplexBinary_2015", #did student live in South complex in 2015?
+         "SS18_Persistence" #Outcome
+))
+
+#merge extra survey variables and each imputed wide wide dataset
+  #this yields datasets that are 1287 observations of 80 variables, which is what we started with. Hooray!
+
+imp1_final <- left_join(imp1_wide, original_survey_variables, by = "study_id")
+
+imp2_final <- left_join(imp2_wide, original_survey_variables, by = "study_id")
+
+imp3_final <- left_join(imp3_wide, original_survey_variables, by = "study_id")
+
+imp4_final <- left_join(imp4_wide, original_survey_variables, by = "study_id")
+
+imp5_final <- left_join(imp5_wide, original_survey_variables, by = "study_id")
+
+#Remove extra stuff from working environment (intermediate objects)
+remove(imp1, imp1_wide, imp2, imp2_wide, imp3, imp3_wide, imp4, imp4_wide, imp5, imp5_wide, original_survey_variables, V1_only, V2_only, V3_only, V4_only)
+```
+
+
+# Save the objects for use in the random forest stuff
+```{r}
+saveRDS(imp1_final,file="imp1.Rda")
+saveRDS(imp2_final,file="imp2.Rda")
+saveRDS(imp3_final,file="imp3.Rda")
+saveRDS(imp4_final,file="imp4.Rda")
+saveRDS(imp5_final,file="imp5.Rda")
+
+#More on saving data frames here:
+# https://stackoverflow.com/questions/8345759/how-to-save-a-data-frame-in-r
+```
+
+
+END NOTES
+Helpful reading on Amelia
+ https://opr.princeton.edu/workshops/Downloads/2018Jan_AmeliaPratt.pdf 
+ 
+ 
+## Notes from Shahryar Meeting 3.4.19
+The reason that I have errors like this
+  "error: inv_sympd(): matrix is singular or not positive definite" is:
+  too much collinearity
+	⁃	Solution: Be more restrictive in terms of the variables that I’m putting in
+	⁃	Don’t include things correlated more than .9
+	⁃	Next Steps: Give it a small data frame. Pick the variables that I care most about imputing and the variables that are most related to those variables based on correlations and my own knowledge. Run the imputations and generate those datasets
+	⁃	Generate 5 datasets. Each will be slightly different in terms of what values they assign to each observation. Usually people would run the regression on all datasets and combine parameter estimates, giving one set of results that accounts for uncertainty in the model and uncertainty in the imputations. For RF, there is no way to combine estimates ACROSS RF models. So what we will do instead is pick one imputed dataset and run the analysis. And then as a robustness check, we will run the analysis on the other four datasets to make sure consistent across
+	⁃	Make sure that I understand the output
+  

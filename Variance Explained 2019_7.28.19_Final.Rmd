@@ -1,0 +1,243 @@
+---
+title: "Variance Explained July 2019"
+author: "Emily Bovee"
+date: "7/19/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+This will be the document where I saved all the analyses I did on the CSV files for the variance explained.
+
+For RQ3, I calculated the variance explained right in the documents themselves. However, for these analyses, that won't work because I didn't know how to calculate RMSEs when I was getting the results of those files.
+
+But now I know from the 7.23.19 email from Shahryar that the thing I need to do is to merge the data files together and then get the results into the formula.
+
+These analyses were run on my work computer; the code reflects that accordingly. If needed, I can just change the working directory specification and then run whatever I want.
+
+#Set Working Directory and load files
+
+```{r}
+setwd("~/Google Drive/** Dissertation **/VARIANCE EXPLAINED")
+
+library(tidyverse)
+library(readr)
+
+#Load Research Question 1 output
+model_1a <- read_csv("model_1a.csv")
+model_1b <- read_csv("model_1b.csv")
+model_1c <- read_csv("model_1c.csv")
+model_1d <- read_csv("model_1d.csv")
+model_1e <- read_csv("model_1e.csv")
+
+#Load Research Question 2 output
+model_2a <- read_csv("model_2a.csv")
+model_2b <- read_csv("model_2b.csv")
+model_2c <- read_csv("model_2c.csv")
+model_2d <- read_csv("model_2d.csv")
+
+```
+
+#Research Question 1: Combining Data & R2
+
+Model 1a
+```{r}
+#########Model 1a
+  #Merge y_hat columns together
+pred_1a <- matrix(c(model_1a$yhat_1, model_1a$yhat_2), ncol = 1)
+
+  #merge General y columns togther
+obs_1a <- matrix(c(model_1a$y_1, model_1a$y_2), ncol = 1)
+
+  #bind those together
+
+model_1a_R2 <- data.frame(matrix("", nrow = 2088, ncol = 2))
+model_1a_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_1a, obs_1a))
+
+#R2
+cor(model_1a_R2$yhat, model_1a_R2$y, method = 'pearson')^2
+
+#Here's how I learned how to bind in this way:
+#https://www.dummies.com/programming/r/how-to-add-observations-to-a-data-frame-in-r/
+```
+
+Model 1b
+```{r}
+#########Model 1b
+  #Merge y_hat columns together
+pred_1b <- matrix(c(model_1b$yhat_1, model_1b$yhat_2), ncol = 1)
+
+  #merge General y columns togther
+obs_1b <- matrix(c(model_1b$y_1, model_1b$y_2), ncol = 1)
+
+  #bind those together
+
+model_1b_R2 <- data.frame(matrix("", nrow = 2088, ncol = 2))
+model_1b_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_1b, obs_1b))
+
+#R2
+cor(model_1b_R2$yhat, model_1b_R2$y, method = 'pearson')^2
+
+
+```
+
+
+Model 1c
+```{r}
+#########Model 1c
+
+  #Merge y_hat columns together
+pred_1c <- matrix(c(model_1c$yhat_1, model_1c$yhat_2), ncol = 1)
+
+  #merge General y columns togther
+obs_1c <- matrix(c(model_1c$y_1, model_1c$y_2), ncol = 1)
+
+  #bind those together
+
+model_1c_R2 <- data.frame(matrix("", nrow = 2088, ncol = 2))
+model_1c_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_1c, obs_1c))
+
+#R2
+cor(model_1c_R2$yhat, model_1c_R2$y, method = 'pearson')^2
+
+
+```
+
+Model 1d
+```{r}
+#########Model 1d
+  #Merge y_hat columns together
+pred_1d <- matrix(c(model_1d$yhat_1, model_1d$yhat_2), ncol = 1)
+
+  #merge General y columns togther
+obs_1d <- matrix(c(model_1d$y_1, model_1d$y_2), ncol = 1)
+
+  #bind those together
+
+model_1d_R2 <- data.frame(matrix("", nrow = 2088, ncol = 2))
+model_1d_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_1d, obs_1d))
+
+#R2
+cor(model_1d_R2$yhat, model_1d_R2$y, method = 'pearson')^2
+
+
+```
+
+Model 1e
+```{r}
+#########Model 1e
+  #Merge y_hat columns together
+pred_1e <- matrix(c(model_1e$yhat_1, model_1e$yhat_2), ncol = 1)
+
+  #merge General y columns togther
+obs_1e <- matrix(c(model_1e$y_1, model_1e$y_2), ncol = 1)
+
+  #bind those together
+
+model_1e_R2 <- data.frame(matrix("", nrow = 2088, ncol = 2))
+model_1e_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_1e, obs_1e))
+
+#R2
+cor(model_1e_R2$yhat, model_1e_R2$y, method = 'pearson')^2
+
+
+```
+############################
+#Research Question 2
+
+
+
+Model 2a
+```{r}
+#########Model 2a
+  #Merge y_hat columns together
+pred_2a <- matrix(c(model_2a$yhat_1, model_2a$yhat_2, model_2a$yhat_3, model_2a$yhat_4, model_2a$yhat_5), ncol = 1)
+
+  #merge General y columns togther
+obs_2a <- matrix(c(model_2a$y_1, model_2a$y_2, model_2a$y_3, model_2a$y_4, model_2a$y_5), ncol = 1)
+
+  #bind those together
+
+model_2a_R2 <- data.frame(matrix("", nrow = 5220, ncol = 2))
+model_2a_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_2a, obs_2a))
+
+#R2
+cor(model_2a_R2$yhat, model_2a_R2$y, method = 'pearson')^2
+
+
+```
+
+
+Model 2b
+```{r}
+#########Model 2b
+  #Merge y_hat columns together
+pred_2b <- matrix(c(model_2b$yhat_1, model_2b$yhat_2, model_2b$yhat_3, model_2b$yhat_4, model_2b$yhat_5), ncol = 1)
+
+  #merge General y columns togther
+obs_2b <- matrix(c(model_2b$y_1, model_2b$y_2, model_2b$y_3, model_2b$y_4, model_2b$y_5), ncol = 1)
+
+  #bind those together
+
+model_2b_R2 <- data.frame(matrix("", nrow = 5220, ncol = 2))
+model_2b_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_2b, obs_2b))
+
+#R2
+cor(model_2b_R2$yhat, model_2b_R2$y, method = 'pearson')^2
+
+
+```
+
+
+Model 2c
+```{r}
+#########Model 2c
+  #Merge y_hat columns together
+pred_2c <- matrix(c(model_2c$yhat_1, model_2c$yhat_2, model_2c$yhat_3, model_2c$yhat_4, model_2c$yhat_5), ncol = 1)
+
+  #merge General y columns togther
+obs_2c <- matrix(c(model_2c$y_1, model_2c$y_2, model_2c$y_3, model_2c$y_4, model_2c$y_5), ncol = 1)
+
+  #bind those together
+
+model_2c_R2 <- data.frame(matrix("", nrow = 5220, ncol = 2))
+model_2c_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_2c, obs_2c))
+
+#R2
+cor(model_2c_R2$yhat, model_2c_R2$y, method = 'pearson')^2
+
+# #variable 1
+# cor(model_2c$yhat_1, model_2c$y_1, method = 'pearson')^2
+# 
+# cor(model_2c$yhat_2, model_2c$y_2, method = 'pearson')^2
+# 
+# cor(model_2c$yhat_3, model_2c$y_3, method = 'pearson')^2
+# 
+# cor(model_2c$yhat_4, model_2c$y_4, method = 'pearson')^2
+# 
+# cor(model_2c$yhat_5, model_2c$y_5, method = 'pearson')^2
+
+```
+
+
+
+Model 2d
+```{r}
+#########Model 2d
+  #Merge y_hat columns together
+pred_2d <- matrix(c(model_2d$yhat_1, model_2d$yhat_2, model_2d$yhat_3, model_2d$yhat_4, model_2d$yhat_5), ncol = 1)
+
+  #merge General y columns togther
+obs_2d <- matrix(c(model_2d$y_1, model_2d$y_2, model_2d$y_3, model_2d$y_4, model_2d$y_5), ncol = 1)
+
+  #bind those together
+
+model_2d_R2 <- data.frame(matrix("", nrow = 5220, ncol = 2))
+model_2d_R2[c("yhat", "y")] <- as.data.frame(cbind(pred_2d, obs_2d))
+
+#R2
+cor(model_2d_R2$yhat, model_2d_R2$y, method = 'pearson')^2
+
+
+```

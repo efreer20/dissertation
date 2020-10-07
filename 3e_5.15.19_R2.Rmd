@@ -1,0 +1,269 @@
+---
+title: "3e"
+author: "Emily Bovee"
+date: "3/26/2019"
+output: html_document
+---
+# Common Code Bank for All Multivariate Random Forest Models
+```{r}
+#----------------------Load relevant libraries
+library(MultivariateRandomForest)
+library(pROC)
+library(tidyverse)
+library(doParallel)
+library(foreach)
+setwd("/Volumes/Linnen Lab/MSU Engineering/PROJECTS/Emily Dissertation/*May 2019 Party*")
+getwd()
+#----------------------Load relevant data
+  # Use the output of the Merge!.R file: randomforestdata.csv
+
+#using imputation 2 because that was the dataset that I randomly selected to use for this analysis
+
+data <- read_csv("randomforestdata_3.18.19_withURM.csv")
+
+    #Right now we are at 1287 obs.
+
+#-------Delete listwise
+#Remove nas from the dataset
+RFdata <- na.omit(data)  
+  #1044 observations of 64
+
+#----------------------Set seed
+set.seed(2020)
+#----------------------Set up relevant functions
+
+#------- cv function
+  #taken from the documentation for Amelia Package
+  #adding the set.seed argument
+cvData = function (X, Y, F, seed=2020) {
+  DrugNumber = nrow(Y)
+  Index = 1:DrugNumber
+  FoldedIndex = NULL
+  FF = F - 1
+  for (i in 1:FF) {
+    set.seed(seed)
+    FoldedIndex[[i]] = sample(Index, floor(DrugNumber/F))
+    Index = setdiff(Index, FoldedIndex[[i]])
+    if (i == FF) {
+      FoldedIndex[[i + 1]] = Index
+    }
+  }
+  TestingIndex = NULL
+  TrainingIndex = NULL
+  TrainingData = NULL
+  TestingData = NULL
+  OutputTrain = NULL
+  OutputTest = NULL
+  for (i in 1:F) {
+    TestingIndex[[i]] = FoldedIndex[[i]]
+    TrainingIndex[[i]] = setdiff(1:DrugNumber, TestingIndex[[i]])
+    TrainingData[[i]] = X[TrainingIndex[[i]], , drop = FALSE]
+    TestingData[[i]] = X[TestingIndex[[i]], , drop = FALSE]
+    OutputTrain[[i]] = Y[TrainingIndex[[i]], , drop = FALSE]
+    OutputTest[[i]] = Y[TestingIndex[[i]], , drop = FALSE]
+  }
+  result = list(TrainingData, TestingData, OutputTrain, OutputTest, 
+                FoldedIndex)
+  return(result)
+}
+
+#The GitHub Repository from which this is derived
+#https://github.com/cran/MultivariateRandomForest/blob/master/R/CrossValidation.R
+
+```
+
+Specify only predictors needed for 3e
+
+```{r}
+
+RFdata <- RFdata %>% 
+select(c(
+	    "FEMALE",
+                  "URM",
+                  "FIRSTGEN",
+                  "Max_ACT_Composite",   
+                  "SouthcomplexBinary_2015",
+                 "mlc_yr1",
+	   "mlc_yr2",
+   "mlc_yr3",  
+    "center_event_yr2", 
+    "center_adv_yr2", 
+    "mock_yr2",
+	     "center_event_yr3", 
+     "center_adv_yr3", 
+    "mock_yr3",
+    "adv_yr2",    
+    "adv_yr3",    
+                  "V1_ESE",
+                  "V1_Val",
+                  "V2_ESE",
+                  "V2_Val",
+                  "V3_ESE",
+                  "V3_Val",
+                  "V4_ESE",
+                  "V4_Val",
+"SS18_Persistence"
+))
+
+
+
+
+
+#put(outcome/s) at the front of the dataset
+RFdata <- RFdata %>% 
+  select(SS18_Persistence, everything())
+
+
+
+
+```
+
+
+
+# Random Forest
+
+```{r}
+#------------
+#Generate matrices from dataset in order to later do cross-validation
+#------------
+#The arguments I need for cross-validation
+        #X	      M x N Input matrix, M is the number of samples and N is the number of features
+        #Y	      output responses as column vector
+        #F	      Number of Folds
+
+
+#---------- Create X and Y
+              # X is my data frame in a matrix format with just the features / covariates for the 
+                  #model
+              # Y is my data frame again in a matrix format with just the dependent variables
+
+
+#Creating the x input matrix (predictors)
+  #Make a matrix of predictor variables, for training X, exclude outcome
+ X = data.matrix (RFdata [, -(1)])
+ 
+#Creating the Y input matrix (outcome)
+  #Make a matrix for training Y - outcome variables only
+  Y = data.matrix (RFdata [, (1)])
+  
+###--------------------------------- 
+#Further Reading
+###---------------------------------  
+#More about creating a matrix from a dataframe
+      #https://stat.ethz.ch/R-manual/R-devel/library/base/html/data.matrix.html
+
+# More about subsetting matrices
+# http://astrostatistics.psu.edu/su07/R/html/base/html/subset.html
+
+###---------------------------------  
+#Notes
+###---------------------------------  
+  ###NOTE TO SELF: Make sure data is in the correct order because this calls on you to ignore certain variables and it's important to know the order of the variables in order for this to make sense
+                #for example: the X matrix has -(1:2), meaning we want to exclude the first two rows
+                #the second matrix has 1, 
+```
+
+
+```{r}
+
+# generate dataset for cross-validation
+
+crossData <- cvData(X, Y, F=5, seed=3)
+xTrainList = crossData[[1]]
+xTestList = crossData[[2]]
+yTrainList = crossData[[3]]
+yTestList = crossData[[4]]
+
+```
+
+```{r}
+#-------parameters for the random forest
+n_tree=5
+m_feature=5
+min_leaf=5
+
+#-------For Loop to run the random forest itself
+preds = NULL
+
+cl <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cl)
+
+for(ii in 1:length(xTrainList)){
+  # organize data to run on one fold of cross-validated data
+  trainX = xTrainList[[ ii ]]
+  trainY = yTrainList[[ ii ]]
+  testX = xTestList[[ ii ]]
+  testY = yTestList[[ii]]
+
+  # generate predictions for that fold
+  foldPreds = build_forest_predict(
+    trainX, trainY, n_tree, m_feature, min_leaf, testX
+    )  
+  
+  # organize into big preds df
+  colnames(foldPreds) = paste0('yhat_',1:ncol(foldPreds))
+  colnames(testY) = paste0('y_',1:ncol(testY))
+  foldPreds = cbind(foldPreds, testY)
+  preds = rbind(preds, foldPreds)
+}
+
+stopCluster(cl)
+registerDoSEQ()
+
+dim(preds)
+head(preds)
+
+## Rename the preds df to correspond to this specific one that I'm on
+
+model_3e <- preds
+```
+
+# Performance Evaluation
+```{r}
+# Performance Evaluation
+#--------------------------Residuals
+#save predictions + actual as a dataframe
+preds.df <- as.data.frame(model_3e)
+
+#Create a function to calculate the (predicted - actual: RESIDUAL)
+  #take the absolute value
+residuals<- function(pred, obs){
+  diff <- pred-obs
+  return(abs(diff))
+}
+
+#apply that function
+mod3e_resid <- residuals(preds.df$yhat_1, preds.df$y_1)
+
+#plot the errors in a density plot
+
+resid_plot <- plot(density(mod3e_resid), 
+                          main = "Absolute Value of Residuals for Mot-Persistence Model",
+                          xlab = "Residuals",
+                          ylab = "Density")
+
+##Compare the above area under the curve /ROC to baseline model
+ROC_3e <-roc(preds.df$y_1, preds.df$yhat_1)
+  #ROC takes Actual
+  #then predictor
+
+ROC_3e_plot <- plot(ROC_3e, print.auc = TRUE)
+
+```
+
+#Variance Explained 
+```{r}
+##Sum of squares for the regression
+# regss <- sum(
+#   ( preds.df$yhat_1 - mean(preds.df$yhat_1) )^2
+#   )
+# 
+# #Sum of squares for the Total
+# tss <- sum((preds.df$y_1 - mean(preds.df$y_1))^2)
+# 
+# rsq <- regss/tss
+# rsq
+
+cor(preds.df$yhat_1, preds.df$y_1, method = 'pearson')^2
+
+```

@@ -1,0 +1,448 @@
+---
+title: "MLC Data Processing"
+author: "Emily Bovee"
+date: "1/30/2019"
+output: html_document
+---
+Note to self: The primary difference between this script and the 1.24.19 script is that I reararnged the order of the deidentification.
+The purpose of this is to be able to troubleshoot the merge issue without the issue of compromising student privacy.
+
+Overview of Workflow
+(1) Import 10 tabs from Excel multi-tab document
+(2) Add a variable to designate semester (tabs are separated by semester)
+(3) Add study IDs
+(4) Deidentify
+(5) Remove people who are not part of my study
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+##########################################
+#Setting working directory
+
+  #check what working directory currently is
+getwd()
+
+  #set working directory to point R in the file where the data is
+setwd("/Volumes/Linnen Lab/MSU Engineering/PROJECTS/Emily Dissertation")
+
+  #check to make sure setting the working directory above worked.
+getwd()
+
+##########################################
+#Loading packages for analysis
+
+library(tidyverse)
+library(readxl)
+library(tidylog)
+```
+##Overview
+  This document includes the processing of the MLC data. In its raw form, this dataset was a multi-tab spreadsheet with information from each semester contained in its own tab.
+  
+  My goal in processing it is to have all the data in one unified dataframe.
+  
+  The thing that will make this easier than processing the Center data is that the variable names are the same across tabs, so once I get everything in R, I can process it in the same way.
+  
+  Another step that I will take is to remove the people who are not part of my study.
+
+## 1. Reading in Files
+```{r}
+
+##1. Read MLC data into R
+
+  FS15 <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 1)
+  SS16 <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 2)
+  US16A <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 3)
+  US16B <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 4)
+  FS16 <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 5)
+  SS17 <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 6)
+  US17A <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 7)
+  US17B <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 8)
+  FS17 <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 9)
+  SS18 <- read_excel("MLC_data_Emily_Bovee.xlsx", sheet = 10)
+ 
+studyIDs <- read_excel("Dissertation Master File - 12.12.18.xlsx")
+```    
+## 2. Add semester variable to tag which semester each is for
+
+```{r}
+#Append a SEMESTER variable to EACH of the above files to tag which semester it is
+  #so, for FS15 the variable would say FS15, etc.
+  
+FS15 <- FS15 %>%
+  mutate(semester = "FS15")
+
+SS16 <- SS16 %>%
+  mutate(semester = "SS16")
+
+US16A <- US16A %>%
+  mutate(semester = "US16A")
+
+US16B <- US16B %>%
+  mutate(semester = "US16B")
+
+FS16 <- FS16 %>%
+  mutate(semester = "FS16")
+
+SS17 <- SS17 %>%
+  mutate(semester = "SS17")
+
+US17A <- US17A %>%
+  mutate(semester = "US17A")
+
+US17B <- US17B %>%
+  mutate(semester = "US17B")
+
+FS17 <- FS17 %>%
+  mutate(semester = "FS17")
+
+SS18 <- SS18 %>%
+  mutate(semester = "SS18")
+
+  #check the dataframes created by the above syntax to make sure that each semester variables is correct
+
+```
+
+## 3. Add Study IDs
+```{r}
+#I already loaded the file at the top of the code
+
+#rename the "PID" variable to match the file I'll be joining, which calls it "Pid"
+#rename the other variables so there are no spaces
+
+studyIDs <- studyIDs %>% 
+  rename(Pid = PID,
+         study_id = `Study ID`,
+         net_id = `Net ID`,
+         first = `First name`,
+         last = `Last name`)
+
+#merging study IDs to the 10 component files
+
+FS15 <- left_join(FS15, studyIDs, by = "Pid")
+
+SS16 <- left_join(SS16, studyIDs, by = "Pid")
+
+US16A <- left_join(US16A, studyIDs, by = "Pid")
+
+US16B <- left_join(US16B, studyIDs, by = "Pid")
+
+FS16 <- left_join(FS16, studyIDs, by = "Pid")
+
+SS17 <- left_join(SS17, studyIDs, by = "Pid")
+
+US17A <- left_join(US17A, studyIDs, by = "Pid")
+
+US17B <- left_join(US17B, studyIDs, by = "Pid")
+
+FS17 <- left_join(FS17, studyIDs, by = "Pid")
+
+SS18 <- left_join(SS18, studyIDs, by = "Pid")
+```
+
+
+## 4. Deidentify - remove PIDs, Net IDs, first and last name, and cohort
+```{r}
+#Remove all identifying variables
+drop <- c("Pid", "net_id", "first", "last", "COHORT")
+
+FS15 <- FS15  %>% 
+  select(-one_of(drop))
+
+SS16 <- SS16  %>% 
+  select(-one_of(drop))
+
+US16A <- US16A  %>% 
+  select(-one_of(drop))
+
+US16B <- US16B  %>% 
+  select(-one_of(drop))
+
+FS16 <- FS16  %>% 
+  select(-one_of(drop))
+
+SS17 <- SS17  %>% 
+  select(-one_of(drop))
+
+US17A <- US17A  %>% 
+  select(-one_of(drop))
+
+US17B <- US17B  %>% 
+  select(-one_of(drop))
+
+FS17 <- FS17  %>% 
+  select(-one_of(drop))
+
+SS18 <- SS18 %>% 
+  select(-one_of(drop))
+```
+
+## 5.  Remove people who are not part of my study
+```{r}
+  #delete if they don't have a study ID
+
+FS15 <- FS15 %>% 
+  filter(study_id != "") 
+
+SS16 <- SS16  %>% 
+  filter(study_id != "") 
+
+US16A <- US16A  %>% 
+  filter(study_id != "") 
+
+US16B <- US16B  %>% 
+  filter(study_id != "") 
+
+FS16 <- FS16  %>% 
+  filter(study_id != "") 
+
+SS17 <- SS17  %>% 
+  filter(study_id != "") 
+
+US17A <- US17A  %>% 
+  filter(study_id != "") 
+
+US17B <- US17B  %>% 
+  filter(study_id != "") 
+
+FS17 <- FS17  %>% 
+  filter(study_id != "") 
+
+SS18 <- SS18 %>% 
+  filter(study_id != "") 
+```
+
+# Remove people who were after the Spring survey started (i.e. after 3/22/18)
+
+```{r}
+SS18 <- SS18 %>% 
+  filter(Date < as.Date("2018-03-22"))
+
+#str(SS18$Date)
+
+#For filtering by date
+# https://blog.exploratory.io/filter-with-date-function-ce8e84be680
+```
+
+# 6. Vertical Merge: get all observations in one dataframe with rbind
+```{r}
+
+#Check dimensions of everything before merge
+  #note the number of rows
+
+dim (FS15)
+  # 3099
+
+dim (FS16)
+  # 4348
+
+dim (FS17)
+  # 1198
+
+dim (SS16)
+  # 4336
+
+dim (SS17)
+  # 3987
+
+dim (SS18)
+  # 294
+
+dim (US16A)
+  # 78
+
+dim (US16B)
+  # 71
+
+dim (US17A)
+  # 67
+
+dim (US17B)
+  # 31
+
+#Expected Count of rows in new dataset (sum row dimensions of all above)
+31 + 67 + 71 + 78 + 294 + 3987 + 4336 + 1198 + 4348 + 3099
+  #17509
+
+MLC <- rbind(FS15, FS16, FS17, SS16, SS17, SS18, US16A, US16B, US17A, US17B)
+
+#FURTHER READING 
+
+#More about For loops
+#https://www.r-bloggers.com/how-to-write-the-first-for-loop-in-r/
+
+#More about Rbind
+#  https://stat.ethz.ch/R-manual/R-devel/library/base/html/cbind.html
+```
+
+## Create a StudentSemester variable and decide whether a count is a reasonable thing to do
+
+```{r}
+#Create a new variable for Student Semester
+MLC$StudentSemester = with(MLC, paste(study_id, semester))
+
+#How many people attended math tutoring more than once within a semester?
+  
+plot(density(table(MLC$StudentSemester)))
+      #there is a lot of variability
+      #so it is probably useful to use "count by semester" as a variable
+```
+## Create an MLC Count Variable - By Semester
+  Here, I create an MLC count variable: how many times within a semester did each student attend tutoring?
+  For this, each row is a separate observation and thus a separate tutoring attendance event
+```{r}
+MLC <- MLC %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester
+  mutate(mlcCount = n())
+  #that creates a new variable with 60 unique values
+
+questionr::freq(MLC$mlcCount)
+```
+
+## Create an MLC Sum Minutes Variable - By Semester
+  Here, I create an MLC sum minutes variable: how many MINUTES within a semester did each student attend tutoring?
+  For this, each row is a separate observation and thus a separate tutoring attendance event
+```{r}
+#Note: Some people are marked "no swipe out" - so this "minutes" variable is compromised and is not a complete representation of how many minutes people were *really* at the math tutoring center
+
+#First, rename the time variable to make it easier to work with
+MLC <- MLC %>% 
+  rename( mlc_duration = `Time (minutes)`)
+
+#The mlc_duration variable currently has values of "No swipe out" in addition to numeric
+  # Convert the variable to numeric
+  #This removes the rows that contain text, and replaces them with missing
+MLC$mlc_duration <- as.numeric(MLC$mlc_duration)
+
+questionr::freq(MLC$mlc_duration)
+  #currently 4 0s
+
+#how many NAs are there?
+# MLC %>% 
+#   ungroup() %>% 
+#   count(is.na(MLC$mlc_duration))
+  #599 NAs
+
+  #Recode new mlc_duration variable so that NA is now 0, so that the sum function will work correctly in the next variable creation step 
+    #Doing this because the first time I created the sum, it seemed to work
+        #but for some reason not everyone was assigned a duration. 
+        #So - checking about whether that happened because of NAs?
+MLC <- tidyr::replace_na(MLC, list(mlc_duration = 0))
+
+questionr::freq(MLC$mlc_duration)
+  #Checking the freq of new 0s. There are 603 0s in the mlc_duration column, where previously there were 599 NAs and 4 0s. Yes, this works!
+
+#Further reading:
+  #replace missing "duration" with 0:
+# https://stackoverflow.com/questions/19379081/how-to-replace-na-values-in-a-table-for-selected-columns-data-frame-data-tab 
+
+##Now create the minute count variable
+
+MLC <- MLC %>%
+  group_by(StudentSemester) %>% #Unique ID per student semester
+  mutate(mlc_semester_minutes = sum(mlc_duration))
+
+  #created a new variable with 
+      ######### CHECK 
+      ##############1594 
+      ######### CHECK
+      # unique values and no NA
+
+questionr::freq(MLC$mlc_semester_minutes)
+```
+
+#Merge SummerA and SummerB into one object
+The point of this step is to make it parallel in data structure to my other dataset, which has all Summer variables aggregated together into just "summer"
+
+```{r}
+#skipping for now
+```
+
+#Transform Long to Wide
+
+```{r}
+#First, create a shortened dataset that only includes the variables that I need
+
+short_MLC <- MLC %>% 
+  select(study_id, StudentSemester, semester, mlcCount, mlc_semester_minutes)
+
+#Next, keep only unique values of StudentSemester, drop all others
+  #StudentSemester is a unique identifier
+unique_MLC <- short_MLC %>% 
+  dplyr::distinct(StudentSemester, .keep_all = TRUE)
+
+#Spread the unique dataset to create variables for EACH SEMESTER MLC count
+
+mlc_counts<- spread(unique_MLC %>% 
+                    group_by(study_id) %>% 
+                      select(study_id, semester, mlcCount), semester, mlcCount) 
+
+#Not running the minutes bc decided to eliminate from main analyses
+# mlc_times <- spread(unique_MLC %>% 
+#                       group_by(study_id) %>% 
+#                       select(study_id, semester, mlc_semester_minutes), semester, mlc_semester_minutes)
+
+#Rename the variables so that they make sense in the merged dataset
+
+mlc_counts <- mlc_counts %>% 
+            rename(
+              mlc_visits_F15 = FS15,
+              mlc_visits_S16 = SS16,
+              mlc_visits_US16A = US16A,
+              mlc_visits_US16B = US16B,
+              mlc_visits_FS16 = FS16,
+              mlc_visits_SS17 = SS17,
+              mlc_visits_US17A = US17A,
+              mlc_visits_US17B = US17B,
+              mlc_visits_FS17 = FS17,
+              mlc_visits_SS18 = SS18
+)
+
+
+#I'm not going to keep these for the Minutes because I decided after writing this code to eliminate the Minutes from my main analyses.
+# mlc_times <- mlc_times %>% 
+#             rename(
+#               mlc_minutes_F15 = FS15,
+#               mlc_minutes_S16 = SS16,
+#               mlc_minutes_US16A = US16A,
+#               mlc_minutes_US16B = US16B,
+#               mlc_minutes_FS16 = FS16,
+#               mlc_minutes_SS17 = SS17,
+#               mlc_minutes_US17A = US17A,
+#               mlc_minutes_US17B = US17B,
+#               mlc_minutes_FS17 = FS17,
+#               mlc_minutes_SS18 = SS18
+# )
+
+#join the counts and the times together to be one MLC final dataset
+
+# mlc_final <- left_join(mlc_counts, mlc_times)
+
+```
+
+## Collapse Summer variables into one for each summer
+Currently there are 2 variables for summer 2016 (US16A and US16B)
+There are also 2 variables for summer 2017 (US17A and US17B)
+Here I collapse the summer 2016 variables into 1 and the summer 2017 variables into another variable.
+
+```{r}
+mlc_final <- mlc_counts %>% 
+            mutate(mlc_visits_US16 = mlc_visits_US16A + mlc_visits_US16B,
+                   mlc_visits_US17 = mlc_visits_US17A + mlc_visits_US17B)
+
+#look at the variables by hand to make sure the sums look right - they do. Yay!
+
+#then delete the variables that I don't need
+mlc_final <- mlc_final %>%
+  select(-c("mlc_visits_US16A", "mlc_visits_US16B", "mlc_visits_US17A", "mlc_visits_US17B"))
+    
+#now there are 798 obs of 9 variables
+```
+
+
+##Last Save output to a new file
+
+```{r}
+#1. Save the result as a CSV
+
+write_csv(mlc_final, "mlc_final.csv")
+```
